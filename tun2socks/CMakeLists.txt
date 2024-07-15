@@ -11,3 +11,5 @@ target_compile_options(${MODULE}
     "$<$<CXX_COMPILER_ID:MSVC>:/source-charset:utf-8>" 
     "$<$<CXX_COMPILER_ID:MSVC>:/execution-charset:utf-8>"
 )
+
+target_link_libraries(${MODULE} PRIVATE libtun2socks)
