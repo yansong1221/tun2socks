@@ -1,6 +1,8 @@
 
 set(MODULE libtun2socks)
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Boost REQUIRED COMPONENTS asio)
 find_package(spdlog CONFIG REQUIRED)
@@ -9,15 +11,24 @@ find_package(fmt CONFIG REQUIRED)
 add_library(${MODULE})
 
 
-target_sources(${MODULE} PRIVATE
-
+SET(HEADER_FILES
 ${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/tun2socks.h
+)
 
-${CMAKE_CURRENT_SOURCE_DIR}/src/wintun_service.h
-${CMAKE_CURRENT_SOURCE_DIR}/src/wintun_service.cpp
+SET(SRC_FILES
+${CMAKE_CURRENT_SOURCE_DIR}/src/wintun_service.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/wintun_library.hpp
+
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks.cpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.h
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.cpp
+)
+
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${HEADER_FILES} ${SRC_FILES})
+
+target_sources(${MODULE} PRIVATE
+${HEADER_FILES}
+${SRC_FILES}
 )
 
 target_include_directories(${MODULE}
