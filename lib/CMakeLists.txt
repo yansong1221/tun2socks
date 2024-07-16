@@ -16,13 +16,22 @@ ${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/tun2socks.h
 )
 
 SET(SRC_FILES
-${CMAKE_CURRENT_SOURCE_DIR}/src/wintun_service.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/wintun_library.hpp
 
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks.cpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.h
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.cpp
 )
+if(APPLE)
+message(STATUS "Platform: macOS")
+	list(APPEND SRC_FILES
+		${CMAKE_CURRENT_SOURCE_DIR}/src/tun_service_mac.hpp
+	)
+elseif(MSVC)
+	list(APPEND SRC_FILES 
+		${CMAKE_CURRENT_SOURCE_DIR}/src/wintun_service.hpp
+		${CMAKE_CURRENT_SOURCE_DIR}/src/wintun_library.hpp
+	)
+endif()
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${HEADER_FILES} ${SRC_FILES})
 
