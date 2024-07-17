@@ -39,92 +39,98 @@
 namespace wintun {
 
 namespace details {
-    inline void utf8_utf16(const std::string& utf8, std::wstring& utf16)
-    {
-        auto len = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, NULL, 0);
-        if (len > 0) {
-            wchar_t* tmp = (wchar_t*)malloc(sizeof(wchar_t) * len);
-            MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, tmp, len);
-            utf16.assign(tmp);
-            free(tmp);
-        }
-    }
-
-    inline void utf16_utf8(const std::wstring& utf16, std::string& utf8)
-    {
-        auto len = WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), -1, NULL, 0, 0, 0);
-        if (len > 0) {
-            char* tmp = (char*)malloc(sizeof(char) * len);
-            WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), -1, tmp, len, 0, 0);
-            utf8.assign(tmp);
-            free(tmp);
-        }
-    }
-
-    inline static void log_throw_system_error(std::string_view prefix, DWORD ErrorCode)
-    {
-        boost::system::error_code ec(ErrorCode, boost::system::system_category());
-        SPDLOG_ERROR("{0} [code:{1} message:{2}]", prefix, ec.value(), ec.message());
-        throw boost::system::system_error(ec);
-    }
-    inline static void log_throw_last_system_error(std::string_view prefix)
-    {
-        auto ErrorCode = GetLastError();
-        log_throw_system_error(prefix, ErrorCode);
-    }
-
-    static void CALLBACK ConsoleLogger(_In_ WINTUN_LOGGER_LEVEL Level,
-        _In_ DWORD64 Timestamp,
-        _In_z_ const WCHAR* LogLine)
-    {
-        SYSTEMTIME SystemTime;
-        FileTimeToSystemTime((FILETIME*)&Timestamp, &SystemTime);
-        WCHAR LevelMarker;
-        switch (Level) {
-        case WINTUN_LOG_INFO:
-            LevelMarker = L'+';
-            break;
-        case WINTUN_LOG_WARN:
-            LevelMarker = L'-';
-            break;
-        case WINTUN_LOG_ERR:
-            LevelMarker = L'!';
-            break;
-        default:
-            return;
-        }
-        fwprintf(stderr, L"%04u-%02u-%02u %02u:%02u:%02u.%04u [%c] %s\n",
-            SystemTime.wYear, SystemTime.wMonth, SystemTime.wDay,
-            SystemTime.wHour, SystemTime.wMinute, SystemTime.wSecond,
-            SystemTime.wMilliseconds, LevelMarker, LogLine);
+inline void utf8_utf16(const std::string &utf8, std::wstring &utf16)
+{
+    auto len = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, NULL, 0);
+    if (len > 0) {
+        wchar_t *tmp = (wchar_t *) malloc(sizeof(wchar_t) * len);
+        MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, tmp, len);
+        utf16.assign(tmp);
+        free(tmp);
     }
 }
+
+inline void utf16_utf8(const std::wstring &utf16, std::string &utf8)
+{
+    auto len = WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), -1, NULL, 0, 0, 0);
+    if (len > 0) {
+        char *tmp = (char *) malloc(sizeof(char) * len);
+        WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), -1, tmp, len, 0, 0);
+        utf8.assign(tmp);
+        free(tmp);
+    }
+}
+
+inline static void log_throw_system_error(std::string_view prefix, DWORD ErrorCode)
+{
+    boost::system::error_code ec(ErrorCode, boost::system::system_category());
+    SPDLOG_ERROR("{0} [code:{1} message:{2}]", prefix, ec.value(), ec.message());
+    throw boost::system::system_error(ec);
+}
+inline static void log_throw_last_system_error(std::string_view prefix)
+{
+    auto ErrorCode = GetLastError();
+    log_throw_system_error(prefix, ErrorCode);
+}
+
+static void CALLBACK ConsoleLogger(_In_ WINTUN_LOGGER_LEVEL Level,
+                                   _In_ DWORD64 Timestamp,
+                                   _In_z_ const WCHAR *LogLine)
+{
+    SYSTEMTIME SystemTime;
+    FileTimeToSystemTime((FILETIME *) &Timestamp, &SystemTime);
+    WCHAR LevelMarker;
+    switch (Level) {
+    case WINTUN_LOG_INFO:
+        LevelMarker = L'+';
+        break;
+    case WINTUN_LOG_WARN:
+        LevelMarker = L'-';
+        break;
+    case WINTUN_LOG_ERR:
+        LevelMarker = L'!';
+        break;
+    default:
+        return;
+    }
+    fwprintf(stderr,
+             L"%04u-%02u-%02u %02u:%02u:%02u.%04u [%c] %s\n",
+             SystemTime.wYear,
+             SystemTime.wMonth,
+             SystemTime.wDay,
+             SystemTime.wHour,
+             SystemTime.wMinute,
+             SystemTime.wSecond,
+             SystemTime.wMilliseconds,
+             LevelMarker,
+             LogLine);
+}
+} // namespace details
 
 class session;
 class adapter;
 class library;
 
-class library : public std::enable_shared_from_this<library> {
+class library : public std::enable_shared_from_this<library>
+{
 public:
-    WINTUN_CREATE_ADAPTER_FUNC* WintunCreateAdapter = nullptr;
-    WINTUN_CLOSE_ADAPTER_FUNC* WintunCloseAdapter = nullptr;
-    WINTUN_OPEN_ADAPTER_FUNC* WintunOpenAdapter = nullptr;
-    WINTUN_GET_ADAPTER_LUID_FUNC* WintunGetAdapterLUID = nullptr;
-    WINTUN_GET_RUNNING_DRIVER_VERSION_FUNC* WintunGetRunningDriverVersion = nullptr;
-    WINTUN_DELETE_DRIVER_FUNC* WintunDeleteDriver = nullptr;
-    WINTUN_SET_LOGGER_FUNC* WintunSetLogger = nullptr;
-    WINTUN_START_SESSION_FUNC* WintunStartSession = nullptr;
-    WINTUN_END_SESSION_FUNC* WintunEndSession = nullptr;
-    WINTUN_GET_READ_WAIT_EVENT_FUNC* WintunGetReadWaitEvent = nullptr;
-    WINTUN_RECEIVE_PACKET_FUNC* WintunReceivePacket = nullptr;
-    WINTUN_RELEASE_RECEIVE_PACKET_FUNC* WintunReleaseReceivePacket = nullptr;
-    WINTUN_ALLOCATE_SEND_PACKET_FUNC* WintunAllocateSendPacket = nullptr;
-    WINTUN_SEND_PACKET_FUNC* WintunSendPacket = nullptr;
+    WINTUN_CREATE_ADAPTER_FUNC *WintunCreateAdapter = nullptr;
+    WINTUN_CLOSE_ADAPTER_FUNC *WintunCloseAdapter = nullptr;
+    WINTUN_OPEN_ADAPTER_FUNC *WintunOpenAdapter = nullptr;
+    WINTUN_GET_ADAPTER_LUID_FUNC *WintunGetAdapterLUID = nullptr;
+    WINTUN_GET_RUNNING_DRIVER_VERSION_FUNC *WintunGetRunningDriverVersion = nullptr;
+    WINTUN_DELETE_DRIVER_FUNC *WintunDeleteDriver = nullptr;
+    WINTUN_SET_LOGGER_FUNC *WintunSetLogger = nullptr;
+    WINTUN_START_SESSION_FUNC *WintunStartSession = nullptr;
+    WINTUN_END_SESSION_FUNC *WintunEndSession = nullptr;
+    WINTUN_GET_READ_WAIT_EVENT_FUNC *WintunGetReadWaitEvent = nullptr;
+    WINTUN_RECEIVE_PACKET_FUNC *WintunReceivePacket = nullptr;
+    WINTUN_RELEASE_RECEIVE_PACKET_FUNC *WintunReleaseReceivePacket = nullptr;
+    WINTUN_ALLOCATE_SEND_PACKET_FUNC *WintunAllocateSendPacket = nullptr;
+    WINTUN_SEND_PACKET_FUNC *WintunSendPacket = nullptr;
 
 public:
-    ~library()
-    {
-    }
+    ~library() {}
     static std::shared_ptr<library> instance()
     {
         static std::weak_ptr<library> _instance;
@@ -137,19 +143,22 @@ public:
         _instance = obj;
         return obj;
     }
-    static std::shared_ptr<library> instance(boost::system::error_code& ec) noexcept
+    static std::shared_ptr<library> instance(boost::system::error_code &ec) noexcept
     {
         try {
             ec.clear();
             return library::instance();
 
-        } catch (const boost::system::system_error& system_error) {
+        } catch (const boost::system::system_error &system_error) {
             ec = system_error.code();
             return nullptr;
         }
     }
-    inline std::shared_ptr<adapter> create_adapter(const std::string& _name, const std::string& _tunnel_type);
-    inline std::shared_ptr<adapter> create_adapter(const std::string& _name, const std::string& _tunnel_type, boost::system::error_code& ec) noexcept;
+    inline std::shared_ptr<adapter> create_adapter(const std::string &_name,
+                                                   const std::string &_tunnel_type);
+    inline std::shared_ptr<adapter> create_adapter(const std::string &_name,
+                                                   const std::string &_tunnel_type,
+                                                   boost::system::error_code &ec) noexcept;
 
 private:
     inline void initialize_wintun(void)
@@ -157,14 +166,19 @@ private:
         if (Wintun)
             return;
 
-        Wintun.reset(LoadLibraryExW(
-            L"wintun.dll", NULL,
-            LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32));
+        Wintun.reset(
+            LoadLibraryExW(L"wintun.dll",
+                           NULL,
+                           LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32));
         if (!Wintun)
             details::log_throw_last_system_error("Failed to load Wintun library");
 
-#define X(Name) ((*(FARPROC*)& Name = GetProcAddress(Wintun.get(), #Name)) == NULL)
-        if (X(WintunCreateAdapter) || X(WintunCloseAdapter) || X(WintunOpenAdapter) || X(WintunGetAdapterLUID) || X(WintunGetRunningDriverVersion) || X(WintunDeleteDriver) || X(WintunSetLogger) || X(WintunStartSession) || X(WintunEndSession) || X(WintunGetReadWaitEvent) || X(WintunReceivePacket) || X(WintunReleaseReceivePacket) || X(WintunAllocateSendPacket) || X(WintunSendPacket))
+#define X(Name) ((*(FARPROC *) &Name = GetProcAddress(Wintun.get(), #Name)) == NULL)
+        if (X(WintunCreateAdapter) || X(WintunCloseAdapter) || X(WintunOpenAdapter)
+            || X(WintunGetAdapterLUID) || X(WintunGetRunningDriverVersion) || X(WintunDeleteDriver)
+            || X(WintunSetLogger) || X(WintunStartSession) || X(WintunEndSession)
+            || X(WintunGetReadWaitEvent) || X(WintunReceivePacket) || X(WintunReleaseReceivePacket)
+            || X(WintunAllocateSendPacket) || X(WintunSendPacket))
 #undef X
         {
             details::log_throw_last_system_error("Failed to initialize Wintun");
@@ -178,22 +192,20 @@ private:
     }
 
 private:
-    struct library_deleter {
-        void operator()(HMODULE m) const
-        {
-            FreeLibrary(m);
-        }
+    struct library_deleter
+    {
+        void operator()(HMODULE m) const { FreeLibrary(m); }
     };
     std::unique_ptr<std::remove_pointer_t<HMODULE>, library_deleter> Wintun;
 };
 
-class adapter : public std::enable_shared_from_this<adapter> {
+class adapter : public std::enable_shared_from_this<adapter>
+{
 public:
     adapter(std::shared_ptr<library> _library, WINTUN_ADAPTER_HANDLE _adapter)
         : library_(_library)
         , wintun_adapter_(_adapter)
-    {
-    }
+    {}
     ~adapter()
     {
         if (wintun_adapter_)
@@ -207,7 +219,8 @@ public:
         library_->WintunGetAdapterLUID(wintun_adapter_, &AddressRow.InterfaceLuid);
 
         AddressRow.Address.Ipv4.sin_family = AF_INET;
-        AddressRow.Address.Ipv4.sin_addr.S_un.S_addr = htonl((10 << 24) | (6 << 16) | (7 << 8) | (7 << 0)); /* 10.6.7.7 */
+        AddressRow.Address.Ipv4.sin_addr.S_un.S_addr = htonl((10 << 24) | (6 << 16) | (7 << 8)
+                                                             | (7 << 0)); /* 10.6.7.7 */
         AddressRow.OnLinkPrefixLength = 24; /* This is a /24 network */
         AddressRow.DadState = IpDadStatePreferred;
 
@@ -221,13 +234,10 @@ public:
 
         return std::make_shared<session>(shared_from_this(), Session);
     }
-    inline std::shared_ptr<session> create_session(boost::system::error_code& ec) noexcept;
+    inline std::shared_ptr<session> create_session(boost::system::error_code &ec) noexcept;
 
 private:
-    inline std::shared_ptr<library> get_library() const
-    {
-        return library_;
-    }
+    inline std::shared_ptr<library> get_library() const { return library_; }
 
 private:
     std::shared_ptr<library> library_;
@@ -240,45 +250,55 @@ private:
     friend class session;
 };
 
-class session {
+class session
+{
 public:
     session(std::shared_ptr<adapter> _adapter, WINTUN_SESSION_HANDLE _session)
         : adapter_(_adapter)
         , wintun_session_(_session)
-    {
-    }
-    ~session()
-    {
-        adapter_->get_library()->WintunEndSession(wintun_session_);
-    }
+    {}
+    ~session() { adapter_->get_library()->WintunEndSession(wintun_session_); }
     inline HANDLE read_wait_event()
     {
         return adapter_->get_library()->WintunGetReadWaitEvent(wintun_session_);
     }
-    template <typename ReadHandler>
-    inline void receive_packet(ReadHandler handler) const
-    {
-        boost::asio::async_completion<ReadHandler, void(BYTE*, DWORD)> init(handler);
 
+    template<typename MutableBufferSequence>
+    inline std::size_t receive_packet(const MutableBufferSequence &buffer) const
+    {
         DWORD PacketSize;
-        BYTE* Packet = adapter_->get_library()->WintunReceivePacket(wintun_session_, &PacketSize);
+        BYTE *Packet = adapter_->get_library()->WintunReceivePacket(wintun_session_, &PacketSize);
         if (Packet) {
-            init.completion_handler(Packet, PacketSize);
+            boost::asio::buffer_copy(buffer, boost::asio::const_buffer(Packet, PacketSize));
             adapter_->get_library()->WintunReleaseReceivePacket(wintun_session_, Packet);
-            return;
+            return PacketSize;
         }
         DWORD LastError = GetLastError();
         if (LastError != ERROR_NO_MORE_ITEMS)
             details::log_throw_system_error("Packet read failed", LastError);
+        return 0;
     }
-    inline void send_packets(boost::asio::const_buffer buffer)
+    template<typename MutableBufferSequence>
+    inline std::size_t receive_packet(const MutableBufferSequence &buffer,
+                                      boost::system::error_code &ec) const
+    {
+        try {
+            return receive_packet(buffer);
+
+        } catch (const boost::system::system_error &system_error) {
+            ec = system_error.code();
+            return 0;
+        }
+    }
+    template<typename ConstBufferSequence>
+    inline void send_packets(const ConstBufferSequence& buffer)
     {
         auto b = boost::asio::buffer(buffer);
         if (b.size() == 0)
             return;
 
-        BYTE* Packet = adapter_->get_library()->WintunAllocateSendPacket(wintun_session_,
-            (DWORD)buffer.size());
+        BYTE *Packet = adapter_->get_library()->WintunAllocateSendPacket(wintun_session_,
+                                                                         (DWORD) buffer.size());
         if (Packet) {
             boost::asio::buffer_copy(boost::asio::mutable_buffer(Packet, buffer.size()), buffer);
             adapter_->get_library()->WintunSendPacket(wintun_session_, Packet);
@@ -286,25 +306,37 @@ public:
         }
         details::log_throw_last_system_error("Packet write failed");
     }
+    template<typename ConstBufferSequence>
+    inline void send_packets(const ConstBufferSequence &buffer, boost::system::error_code &ec)
+    {
+        try {
+            return send_packets(inline void send_packets(const ConstBufferSequence &buffer,
+                                                         boost::system::error_code &ec));
+
+        } catch (const boost::system::system_error &system_error) {
+            ec = system_error.code();
+            return 0;
+        }
+    }
 
 private:
     std::shared_ptr<adapter> adapter_;
     WINTUN_SESSION_HANDLE wintun_session_;
 };
 
-std::shared_ptr<wintun::adapter> library::create_adapter(const std::string& _name, const std::string& _tunnel_type)
+std::shared_ptr<wintun::adapter> library::create_adapter(const std::string &_name,
+                                                         const std::string &_tunnel_type)
 {
-
     std::wstring utf16_name;
     std::wstring utf16_tunnel_type;
 
     details::utf8_utf16(_name, utf16_name);
     details::utf8_utf16(_tunnel_type, utf16_tunnel_type);
 
-    GUID ExampleGuid = { 0xdeadbabf,
-        0xcafe,
-        0xbeef,
-        { 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef } };
+    GUID ExampleGuid = {0xdeadbabf,
+                        0xcafe,
+                        0xbeef,
+                        {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}};
     auto _adapter = WintunCreateAdapter(utf16_name.c_str(), utf16_tunnel_type.c_str(), &ExampleGuid);
     if (!_adapter)
         details::log_throw_last_system_error("Failed to create adapter");
@@ -312,28 +344,30 @@ std::shared_ptr<wintun::adapter> library::create_adapter(const std::string& _nam
     return std::make_shared<adapter>(shared_from_this(), _adapter);
 }
 
-std::shared_ptr<wintun::adapter> library::create_adapter(const std::string& _name, const std::string& _tunnel_type, boost::system::error_code& ec) noexcept
+std::shared_ptr<wintun::adapter> library::create_adapter(const std::string &_name,
+                                                         const std::string &_tunnel_type,
+                                                         boost::system::error_code &ec) noexcept
 {
     try {
         ec.clear();
         return create_adapter(_name, _tunnel_type);
 
-    } catch (const boost::system::system_error& system_error) {
+    } catch (const boost::system::system_error &system_error) {
         ec = system_error.code();
         return nullptr;
     }
 }
 
-std::shared_ptr<wintun::session> adapter::create_session(boost::system::error_code& ec) noexcept
+std::shared_ptr<wintun::session> adapter::create_session(boost::system::error_code &ec) noexcept
 {
     try {
         ec.clear();
         return create_session();
 
-    } catch (const boost::system::system_error& system_error) {
+    } catch (const boost::system::system_error &system_error) {
         ec = system_error.code();
         return nullptr;
     }
 }
 
-}
+} // namespace wintun
