@@ -29,3 +29,11 @@
 #else
     #error "Unknown or unsupported compiler."
 #endif
+
+#ifdef OS_WINDOWS
+#include "wintun_service.hpp"
+using tuntap = basic_tuntap<wintun_service>;
+#elif defined(OS_MACOS)
+#include "tun_service_mac.hpp"
+using tuntap = basic_tuntap<tun_service_mac>;
+#endif

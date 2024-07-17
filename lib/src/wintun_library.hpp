@@ -291,7 +291,7 @@ public:
         }
     }
     template<typename ConstBufferSequence>
-    inline void send_packets(const ConstBufferSequence& buffer)
+    inline void send_packets(const ConstBufferSequence &buffer)
     {
         auto b = boost::asio::buffer(buffer);
         if (b.size() == 0)

@@ -5,26 +5,8 @@
 #include <boost/asio.hpp>
 #include <boost/asio/windows/object_handle.hpp>
 
-// 定义IP包头的结构体
-struct Ipv4Header
-{
-    uint8_t ihl : 4;         // 头部长度
-    uint8_t version : 4;     // 版本
-    uint8_t tos;             // 服务类型
-    uint16_t totalLength;    // 总长度
-    uint16_t identification; // 标识符
-    uint16_t flagsAndOffset; // 标志和片偏移
-    uint8_t ttl;             // 生存时间
-    uint8_t protocol;        // 协议
-    uint16_t checksum;       // 头部校验和
-    uint32_t sourceIp;       // 源IP地址
-    uint32_t destIp;         // 目的IP地址
-};
-
 class wintun_service
 {
-    class initiate_async_read_some;
-
 public:
     wintun_service(boost::asio::io_context &ioc)
         : ioc_(ioc)
@@ -53,6 +35,8 @@ public:
             auto bytes = co_await async_read_some(buffer.prepare(64 * 1024), net_awaitable[ec]);
             if (ec)
                 co_return;
+
+            // bytes = co_await async_write_some(buffer, net_awaitable[ec]);
         }
     };
 
@@ -63,7 +47,7 @@ public:
         return boost::asio::async_initiate<ReadToken, void(boost::system::error_code, std::size_t)>(
             [this](auto &&handler, auto &&buffers) {
                 receive_event_.async_wait(
-                    [&, handler = std::move(handler), buffers = std::move(buffers)](
+                    [this, handler = std::move(handler), buffers = std::move(buffers)](
                         const boost::system::error_code &ec) mutable {
                         if (ec) {
                             handler(ec, 0);
@@ -85,12 +69,24 @@ public:
     {
         return boost::asio::async_initiate<WriteHandler,
                                            void(boost::system::error_code, std::size_t)>(
-            [this](auto &&handler, auto &&buffers) { wintun_session_->send_packets(buffers); },
+            [this](auto &&handler, auto &&buffers) {
+                boost::asio::post(ioc_,
+                                  [this,
+                                   handler = std::move(handler),
+                                   buffers = std::move(buffers)]() {
+                                      boost::system::error_code ec;
+                                      wintun_session_->send_packets(buffers, ec);
+                                      if (ec) {
+                                          handler(ec, 0);
+                                          return;
+                                      }
+                                      handler(ec, boost::asio::buffer_size(buffers));
+                                  });
+            },
             handler,
             buffers);
     }
 
-private:
 private:
     boost::asio::io_context &ioc_;
     boost::asio::windows::object_handle receive_event_;

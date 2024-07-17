@@ -16,14 +16,14 @@ ${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/tun2socks.h
 )
 
 SET(SRC_FILES
-
+${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/basic_tuntap.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks.cpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.h
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.cpp
 )
 if(APPLE)
-message(STATUS "Platform: macOS")
 	list(APPEND SRC_FILES
 		${CMAKE_CURRENT_SOURCE_DIR}/src/tun_service_mac.hpp
 	)
