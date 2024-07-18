@@ -12,8 +12,8 @@ public:
         : ioc_(ioc)
         , receive_event_(ioc)
     {}
-    using executor_type = typename boost::asio::io_context::executor_type;
-    void open()
+
+    inline void open()
     {
         boost::system::error_code ec;
 
@@ -23,22 +23,13 @@ public:
         wintun_session_ = wintun_adapter->create_session();
 
         receive_event_.assign(wintun_session_->read_wait_event());
-
-        boost::asio::co_spawn(ioc_, co_receive_packet(), boost::asio::detached);
-        ioc_.run();
     }
-    boost::asio::awaitable<void> co_receive_packet()
-    {
-        for (;;) {
-            boost::system::error_code ec;
-            boost::asio::streambuf buffer;
-            auto bytes = co_await async_read_some(buffer.prepare(64 * 1024), net_awaitable[ec]);
-            if (ec)
-                co_return;
 
-            // bytes = co_await async_write_some(buffer, net_awaitable[ec]);
-        }
-    };
+    inline void close()
+    {
+        boost::system::error_code ec;
+        receive_event_.close(ec);
+    }
 
     template<typename MutableBufferSequence,
              BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, std::size_t)) ReadToken>
@@ -69,19 +60,19 @@ public:
     {
         return boost::asio::async_initiate<WriteHandler,
                                            void(boost::system::error_code, std::size_t)>(
-            [this](auto &&handler, auto &&buffers) {
-                boost::asio::post(ioc_,
-                                  [this,
-                                   handler = std::move(handler),
-                                   buffers = std::move(buffers)]() {
-                                      boost::system::error_code ec;
-                                      wintun_session_->send_packets(buffers, ec);
-                                      if (ec) {
-                                          handler(ec, 0);
-                                          return;
-                                      }
-                                      handler(ec, boost::asio::buffer_size(buffers));
-                                  });
+            [this](auto &&handler, auto &&buffers) mutable {
+                boost::asio::dispatch(ioc_,
+                                      [this,
+                                       handler = std::move(handler),
+                                       buffers = std::move(buffers)]() mutable {
+                                          boost::system::error_code ec;
+                                          wintun_session_->send_packets(buffers, ec);
+                                          if (ec) {
+                                              handler(ec, 0);
+                                              return;
+                                          }
+                                          handler(ec, boost::asio::buffer_size(buffers));
+                                      });
             },
             handler,
             buffers);

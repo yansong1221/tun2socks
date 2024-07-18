@@ -17,6 +17,8 @@ ${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/tun2socks.h
 
 SET(SRC_FILES
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/ip_packet.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/ip_layer_stack.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/basic_tuntap.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks.cpp

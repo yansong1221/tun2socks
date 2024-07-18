@@ -8,9 +8,13 @@ public:
     typedef typename Device device_type;
 
     explicit basic_tuntap(boost::asio::io_context &ioc)
-        : device_(boost::asio::use_service<Device>(ioc))
+        : ioc_(ioc)
+        , device_(ioc)
     {}
-    void open() { device_.open(); }
+    inline void open() { device_.open(); }
+    inline void close() { device_.close(); }
+
+    auto get_executor() noexcept { return ioc_.get_executor(); }
 
     template<typename MutableBufferSequence,
              BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, std::size_t)) ReadToken>
@@ -27,5 +31,6 @@ public:
     }
 
 private:
+    boost::asio::io_context &ioc_;
     device_type device_;
 };

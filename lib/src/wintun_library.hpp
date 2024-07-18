@@ -155,10 +155,39 @@ public:
         }
     }
     inline std::shared_ptr<adapter> create_adapter(const std::string &_name,
-                                                   const std::string &_tunnel_type);
+                                                   const std::string &_tunnel_type)
+    {
+        std::wstring utf16_name;
+        std::wstring utf16_tunnel_type;
+
+        details::utf8_utf16(_name, utf16_name);
+        details::utf8_utf16(_tunnel_type, utf16_tunnel_type);
+
+        GUID ExampleGuid = {0xdeadbabf,
+                            0xcafe,
+                            0xbeef,
+                            {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}};
+        auto _adapter = WintunCreateAdapter(utf16_name.c_str(),
+                                            utf16_tunnel_type.c_str(),
+                                            &ExampleGuid);
+        if (!_adapter)
+            details::log_throw_last_system_error("Failed to create adapter");
+
+        return std::make_shared<adapter>(shared_from_this(), _adapter);
+    }
     inline std::shared_ptr<adapter> create_adapter(const std::string &_name,
                                                    const std::string &_tunnel_type,
-                                                   boost::system::error_code &ec) noexcept;
+                                                   boost::system::error_code &ec) noexcept
+    {
+        try {
+            ec.clear();
+            return create_adapter(_name, _tunnel_type);
+
+        } catch (const boost::system::system_error &system_error) {
+            ec = system_error.code();
+            return nullptr;
+        }
+    }
 
 private:
     inline void initialize_wintun(void)
@@ -234,7 +263,16 @@ public:
 
         return std::make_shared<session>(shared_from_this(), Session);
     }
-    inline std::shared_ptr<session> create_session(boost::system::error_code &ec) noexcept;
+    inline std::shared_ptr<session> create_session(boost::system::error_code &ec) noexcept
+    {
+        try {
+            return create_session();
+
+        } catch (const boost::system::system_error &system_error) {
+            ec = system_error.code();
+            return nullptr;
+        }
+    }
 
 private:
     inline std::shared_ptr<library> get_library() const { return library_; }
@@ -293,14 +331,13 @@ public:
     template<typename ConstBufferSequence>
     inline void send_packets(const ConstBufferSequence &buffer)
     {
-        auto b = boost::asio::buffer(buffer);
-        if (b.size() == 0)
+        DWORD send_size = (DWORD) boost::asio::buffer_size(buffer);
+        if (send_size == 0)
             return;
 
-        BYTE *Packet = adapter_->get_library()->WintunAllocateSendPacket(wintun_session_,
-                                                                         (DWORD) buffer.size());
+        BYTE *Packet = adapter_->get_library()->WintunAllocateSendPacket(wintun_session_, send_size);
         if (Packet) {
-            boost::asio::buffer_copy(boost::asio::mutable_buffer(Packet, buffer.size()), buffer);
+            boost::asio::buffer_copy(boost::asio::mutable_buffer(Packet, send_size), buffer);
             adapter_->get_library()->WintunSendPacket(wintun_session_, Packet);
             return;
         }
@@ -310,12 +347,10 @@ public:
     inline void send_packets(const ConstBufferSequence &buffer, boost::system::error_code &ec)
     {
         try {
-            return send_packets(inline void send_packets(const ConstBufferSequence &buffer,
-                                                         boost::system::error_code &ec));
+            return send_packets(buffer);
 
         } catch (const boost::system::system_error &system_error) {
             ec = system_error.code();
-            return 0;
         }
     }
 
@@ -323,51 +358,5 @@ private:
     std::shared_ptr<adapter> adapter_;
     WINTUN_SESSION_HANDLE wintun_session_;
 };
-
-std::shared_ptr<wintun::adapter> library::create_adapter(const std::string &_name,
-                                                         const std::string &_tunnel_type)
-{
-    std::wstring utf16_name;
-    std::wstring utf16_tunnel_type;
-
-    details::utf8_utf16(_name, utf16_name);
-    details::utf8_utf16(_tunnel_type, utf16_tunnel_type);
-
-    GUID ExampleGuid = {0xdeadbabf,
-                        0xcafe,
-                        0xbeef,
-                        {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}};
-    auto _adapter = WintunCreateAdapter(utf16_name.c_str(), utf16_tunnel_type.c_str(), &ExampleGuid);
-    if (!_adapter)
-        details::log_throw_last_system_error("Failed to create adapter");
-
-    return std::make_shared<adapter>(shared_from_this(), _adapter);
-}
-
-std::shared_ptr<wintun::adapter> library::create_adapter(const std::string &_name,
-                                                         const std::string &_tunnel_type,
-                                                         boost::system::error_code &ec) noexcept
-{
-    try {
-        ec.clear();
-        return create_adapter(_name, _tunnel_type);
-
-    } catch (const boost::system::system_error &system_error) {
-        ec = system_error.code();
-        return nullptr;
-    }
-}
-
-std::shared_ptr<wintun::session> adapter::create_session(boost::system::error_code &ec) noexcept
-{
-    try {
-        ec.clear();
-        return create_session();
-
-    } catch (const boost::system::system_error &system_error) {
-        ec = system_error.code();
-        return nullptr;
-    }
-}
 
 } // namespace wintun

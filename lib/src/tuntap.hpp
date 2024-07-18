@@ -30,6 +30,7 @@
 #error "Unknown or unsupported compiler."
 #endif
 
+#include "basic_tuntap.hpp"
 #ifdef OS_WINDOWS
 #include "wintun_service.hpp"
 #elif defined(OS_MACOS)
