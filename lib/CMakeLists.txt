@@ -18,6 +18,8 @@ ${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/tun2socks.h
 SET(SRC_FILES
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/ip_packet.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/udp_packet.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_packet.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/ip_layer_stack.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/basic_tuntap.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp
@@ -55,6 +57,10 @@ PRIVATE spdlog::spdlog fmt::fmt
 
 if(MSVC)
 	target_compile_definitions(${MODULE} PRIVATE _WIN32_WINDOWS)
+	target_compile_options( ${MODULE} PRIVATE
+		"$<$<CXX_COMPILER_ID:MSVC>:/source-charset:utf-8>"
+		"$<$<CXX_COMPILER_ID:MSVC>:/execution-charset:utf-8>"
+	)
 	set_target_properties(${MODULE} PROPERTIES
     LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\" /SUBSYSTEM:WINDOWS"
 )

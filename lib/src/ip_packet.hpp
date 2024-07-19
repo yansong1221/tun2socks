@@ -2,14 +2,7 @@
 #include <boost/asio.hpp>
 #include <optional>
 #include <spdlog/spdlog.h>
-namespace ip_packet {
-
-enum class transport_protocol_type : uint8_t {
-    unknown = 0,
-    icmp = 0x01,
-    tcp = 0x06,
-    udp = 0x11,
-};
+namespace network_layer {
 
 enum class icmp_type : uint8_t {
     echo_reply = 0,              // 回显应答
@@ -33,6 +26,7 @@ struct alignas(4) icmp_header
     uint16_t identifier;
     uint16_t sequenceNumber;
 };
+
 struct alignas(4) tcp_header
 {
     uint16_t sourcePort;           // 源端口号
@@ -71,81 +65,61 @@ struct alignas(4) ipv6_header
     uint8_t dest_addr[16];         // Destination Address
 };
 
-inline static uint16_t ip_checksum(const uint8_t *buffer, std::size_t len)
-{
-    uint32_t sum = 0;
-    for (; len > 1; len -= 2, buffer += 2)
-        sum += *(uint16_t *) buffer;
-    if (len)
-        sum += *buffer;
-    sum = (sum >> 16) + (sum & 0xffff);
-    sum += (sum >> 16);
-    return (uint16_t) (~sum);
-}
 } // namespace details
 
-class ip
+class ip_packet
 {
 public:
-    enum class version_type { v4, v6 };
-    explicit ip(version_type version,
-                const boost::asio::ip::address src_addr,
-                const boost::asio::ip::address dst_addr,
-                uint8_t protocol,
-                const boost::asio::const_buffer &payload_data,
-                const boost::asio::const_buffer &v4_options_data = boost::asio::const_buffer())
+    enum class version_type : uint8_t { v4 = 4, v6 = 6 };
+
+    explicit ip_packet(version_type version,
+                       const boost::asio::ip::address &src_addr,
+                       const boost::asio::ip::address &dst_addr,
+                       uint8_t protocol,
+                       const boost::asio::const_buffer &payload_data)
         : version_(version)
         , src_addr_(src_addr)
         , dst_addr_(dst_addr)
         , protocol_(protocol)
         , payload_data_(payload_data)
-        , v4_options_data_(v4_options_data)
     {}
 
     version_type version() const { return version_; }
     boost::asio::ip::address src_address() const { return src_addr_; }
     boost::asio::ip::address dst_address() const { return dst_addr_; }
-    uint8_t next_protocol() { return protocol_; }
+    uint8_t next_protocol() const { return protocol_; }
     boost::asio::const_buffer payload_data() const { return payload_data_; }
-    boost::asio::const_buffer v4_options_data() const { return v4_options_data_; }
 
     template<typename Allocator>
-    void make_packet(boost::asio::basic_streambuf<Allocator> &buffer)
+    void make_packet(boost::asio::basic_streambuf<Allocator> &buffer) const
     {
         switch (version_) {
         case version_type::v4: {
             constexpr auto header_len = sizeof(details::ipv4_header);
-            auto options_data_len = boost::asio::buffer_size(v4_options_data_);
 
             constexpr uint8_t ihl = header_len / 4;
             static std::atomic_uint16_t index = 0;
 
-            auto payload_len = boost::asio::buffer_size(payload_data_);
+            uint16_t tot_len = header_len + payload_data_.size();
 
-            auto header_buffer = buffer.prepare(header_len + options_data_len);
+            auto buf = buffer.prepare(tot_len);
+            memset(buf.data(), 0, tot_len);
 
-            auto header = boost::asio::buffer_cast<details::ipv4_header *>(header_buffer);
-            memset(header, 0, sizeof(details::ipv4_header));
+            auto header = boost::asio::buffer_cast<details::ipv4_header *>(buf);
 
             header->ihl = ihl;
             header->version = 4;
-            header->tot_len = ::htons(sizeof(details::ipv4_header) + options_data_len + payload_len);
+            header->tot_len = ::htons(tot_len);
             header->id = ::htons(index++);
             header->ttl = 0x30;
             header->protocol = protocol_;
             header->saddr = ::htonl(src_addr_.to_v4().to_ulong());
             header->daddr = ::htonl(dst_addr_.to_v4().to_ulong());
-            boost::asio::buffer_copy(header_buffer + sizeof(details::ipv4_header), v4_options_data_);
 
-            header->check = details::ip_checksum((const uint8_t *) (header),
-                                                 header_len + options_data_len);
-            buffer.commit(header_len + options_data_len);
+            header->check = ip_checksum((const uint8_t *) (header), header_len);
+            memcpy(header + 1, payload_data_.data(), payload_data_.size());
 
-            if (payload_len > 0) {
-                auto payload_buffer = buffer.prepare(payload_len);
-                boost::asio::buffer_copy(payload_buffer, payload_data_);
-                buffer.commit(payload_len);
-            }
+            buffer.commit(tot_len);
 
         } break;
         case version_type::v6: {
@@ -164,8 +138,9 @@ public:
             header->payload_len = ::htons(payload_len);
             header->next_header = protocol_;
             header->hop_limit = 0x30;
-            std::copy(src_addr_bytes.begin(), src_addr_bytes.end(), std::begin(header->src_addr));
-            std::copy(dst_addr_bytes.begin(), dst_addr_bytes.end(), std::begin(header->dest_addr));
+
+            memcpy(header->src_addr, src_addr_bytes.data(), sizeof(header->src_addr));
+            memcpy(header->dest_addr, dst_addr_bytes.data(), sizeof(header->dest_addr));
 
             buffer.commit(header_len);
             if (payload_len > 0) {
@@ -179,7 +154,7 @@ public:
         }
     }
     template<typename ConstBufferSequence>
-    static std::optional<ip> create_from_packet(ConstBufferSequence buffers)
+    static std::optional<ip_packet> from_packet(ConstBufferSequence &&buffers)
     {
         auto buf = boost::asio::buffer_cast<const uint8_t *>(buffers);
         auto len = boost::asio::buffer_size(buffers);
@@ -190,7 +165,7 @@ public:
         }
         uint8_t version = (buf[0] & 0xf0) >> 4;
         switch (version) {
-        case 4: {
+        case (uint8_t) version_type::v4: {
             if (len < sizeof(details::ipv4_header)) {
                 SPDLOG_INFO("Received packet without room for an IPv4 header");
                 return std::nullopt;
@@ -200,12 +175,13 @@ public:
             auto header_len = header->ihl * 4;
             auto total_len = ntohs(header->tot_len);
 
-            if (header_len < sizeof(details::ipv4_header) || total_len < header_len) {
+            if (header_len < sizeof(details::ipv4_header) || total_len != len
+                || total_len < header_len) {
                 SPDLOG_INFO("Received packet without room for an IPv4 header");
                 return std::nullopt;
             }
 
-            if (details::ip_checksum((const uint8_t *) header, header_len) != 0) {
+            if (ip_checksum((const uint8_t *) header, header_len) != 0) {
                 SPDLOG_WARN("Received IPv4 packet Calculation checksum error");
                 return std::nullopt;
             }
@@ -213,38 +189,62 @@ public:
             boost::asio::ip::address_v4 src_addr(::htonl(header->saddr));
             boost::asio::ip::address_v4 dst_addr(::htonl(header->daddr));
 
-            SPDLOG_INFO("IP Packet from: {0} to: {1} protocol: 0x{2:x}",
-                        src_addr.to_string(),
-                        dst_addr.to_string(),
-                        header->protocol);
+            SPDLOG_DEBUG("IPv4 Packet [{0}] -> [{1}] protocol:[0x{2:x}]",
+                         src_addr.to_string(),
+                         dst_addr.to_string(),
+                         header->protocol);
 
             buffers += header_len;
+            //if (auto options_len = header_len - sizeof(details::ipv4_header); options_len > 0) {
+            //    /* auto data = boost::asio::buffer_cast<const uint8_t *>(buffers);
+            //    auto options_data = boost::asio::const_buffer(data, options_len);
 
-            boost::asio::const_buffer options_data;
+            //    SPDLOG_INFO("Received packet without room for an IPv4 header");*/
+            //    // 跳过
+            //    buffers += options_len;
+            //}
 
-            if (auto options_len = header_len - sizeof(details::ipv4_header); options_len > 0) {
-                auto data = boost::asio::buffer_cast<const void *>(buffers);
-                options_data = boost::asio::const_buffer(data, options_len);
-                buffers += options_len;
-            }
-
-            return ip(ip::version_type::v4,
-                      boost::asio::ip::address(src_addr),
-                      boost::asio::ip::address(dst_addr),
-                      header->protocol,
-                      options_data,
-                      buffers);
+            return ip_packet(ip_packet::version_type::v4,
+                             boost::asio::ip::address(src_addr),
+                             boost::asio::ip::address(dst_addr),
+                             header->protocol,
+                             buffers);
         } break;
-        case 6: {
+        case (uint8_t) version_type::v6: {
             if (len < sizeof(details::ipv6_header)) {
                 SPDLOG_INFO("Received packet without room for an IPv6 header");
                 return std::nullopt;
             }
-            auto _header = boost::asio::buffer_cast<const details::ipv6_header *>(buffers);
+            auto header = boost::asio::buffer_cast<const details::ipv6_header *>(buffers);
 
-            buf += sizeof(details::ipv6_header);
-            len -= sizeof(details::ipv6_header);
+            auto version_traffic_flow = ::ntohl(header->version_traffic_flow);
+            auto version = (version_traffic_flow >> 28) & 0xF;
+            auto traffic = (version_traffic_flow >> 20) & 0xFF;
+            auto flow = version_traffic_flow & 0xFFFFF;
 
+            auto payload_len = ::ntohs(header->payload_len);
+
+            boost::asio::ip::address_v6::bytes_type src_addr_bytes;
+            boost::asio::ip::address_v6::bytes_type dst_addr_bytes;
+
+            memcpy(src_addr_bytes.data(), header->src_addr, sizeof(header->src_addr));
+            memcpy(dst_addr_bytes.data(), header->dest_addr, sizeof(header->dest_addr));
+
+            boost::asio::ip::address_v6 src_addr(src_addr_bytes);
+            boost::asio::ip::address_v6 dst_addr(dst_addr_bytes);
+
+            SPDLOG_DEBUG("IPv6 Packet [{0}] -> [{1}] protocol:[0x{2:x}]",
+                         src_addr.to_string(),
+                         dst_addr.to_string(),
+                         header->next_header);
+
+            buffers += sizeof(details::ipv6_header);
+
+            return ip_packet(ip_packet::version_type::v6,
+                             boost::asio::ip::address(src_addr),
+                             boost::asio::ip::address(dst_addr),
+                             header->next_header,
+                             buffers);
         } break;
         default:
             break;
@@ -260,44 +260,54 @@ private:
         value |= flow & 0x000FFFFF;
         return value;
     }
+    inline static uint16_t ip_checksum(const uint8_t *buffer, std::size_t len)
+    {
+        uint32_t sum = 0;
+        for (; len > 1; len -= 2, buffer += 2)
+            sum += *(uint16_t *) buffer;
+        if (len)
+            sum += *buffer;
+        sum = (sum >> 16) + (sum & 0xffff);
+        sum += (sum >> 16);
+        return (uint16_t) (~sum);
+    }
 
 private:
     version_type version_;
     boost::asio::ip::address src_addr_;
     boost::asio::ip::address dst_addr_;
     uint8_t protocol_;
-    boost::asio::const_buffer v4_options_data_;
     boost::asio::const_buffer payload_data_;
 };
 
-template<typename Allocator, typename ConstBufferSequence>
-void make_icmp_packet(boost::asio::basic_streambuf<Allocator> &buffer,
-                      uint8_t type,
-                      uint8_t code,
-                      uint16_t identifier,
-                      uint16_t sequenceNumber,
-                      const ConstBufferSequence &payload)
-{
-    constexpr auto header_len = sizeof(details::icmp_header);
-    auto payload_len = boost::asio::buffer_size(payload);
+//template<typename Allocator, typename ConstBufferSequence>
+//void make_icmp_packet(boost::asio::basic_streambuf<Allocator> &buffer,
+//                      uint8_t type,
+//                      uint8_t code,
+//                      uint16_t identifier,
+//                      uint16_t sequenceNumber,
+//                      const ConstBufferSequence &payload)
+//{
+//    constexpr auto header_len = sizeof(details::icmp_header);
+//    auto payload_len = boost::asio::buffer_size(payload);
+//
+//    auto header_buffer = buffer.prepare(header_len);
+//    memset(header_buffer.data(), 0, header_buffer.size());
+//
+//    auto header = boost::asio::buffer_cast<details::icmp_header *>(header_buffer);
+//    header->type = type;
+//    header->code = code;
+//    header->identifier = ::htons(identifier);
+//    header->sequenceNumber = ::htons(sequenceNumber);
+//    header->checksum = details::ip_checksum((const uint8_t *) (header), header_len);
+//
+//    buffer.commit(header_len);
+//
+//    if (payload_len != 0) {
+//        auto payload_buffer = buffer.prepare(payload_len);
+//        boost::asio::buffer_copy(payload_buffer, payload);
+//        buffer.commit(payload_len);
+//    }
+//}
 
-    auto header_buffer = buffer.prepare(header_len);
-    memset(header_buffer.data(), 0, header_buffer.size());
-
-    auto header = boost::asio::buffer_cast<details::icmp_header *>(header_buffer);
-    header->type = type;
-    header->code = code;
-    header->identifier = ::htons(identifier);
-    header->sequenceNumber = ::htons(sequenceNumber);
-    header->checksum = details::ip_checksum((const uint8_t *) (header), header_len);
-
-    buffer.commit(header_len);
-
-    if (payload_len != 0) {
-        auto payload_buffer = buffer.prepare(payload_len);
-        boost::asio::buffer_copy(payload_buffer, payload);
-        buffer.commit(payload_len);
-    }
-}
-
-} // namespace ip_packet
+} // namespace network_layer
