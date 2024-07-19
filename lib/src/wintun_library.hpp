@@ -32,6 +32,7 @@
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
 
+#include <filesystem>
 #include <spdlog/spdlog.h>
 
 #pragma comment(lib, "iphlpapi.lib")
@@ -77,33 +78,20 @@ static void CALLBACK ConsoleLogger(_In_ WINTUN_LOGGER_LEVEL Level,
                                    _In_ DWORD64 Timestamp,
                                    _In_z_ const WCHAR *LogLine)
 {
-    SYSTEMTIME SystemTime;
-    FileTimeToSystemTime((FILETIME *) &Timestamp, &SystemTime);
-    WCHAR LevelMarker;
+    auto msg = std::filesystem::path(LogLine).string();
     switch (Level) {
     case WINTUN_LOG_INFO:
-        LevelMarker = L'+';
+        spdlog::info("[wintun.dll]: {0}", msg);
         break;
     case WINTUN_LOG_WARN:
-        LevelMarker = L'-';
+        spdlog::warn("[wintun.dll]: {0}", msg);
         break;
     case WINTUN_LOG_ERR:
-        LevelMarker = L'!';
+        spdlog::error("[wintun.dll]: {0}", msg);
         break;
     default:
         return;
     }
-    fwprintf(stderr,
-             L"%04u-%02u-%02u %02u:%02u:%02u.%04u [%c] %s\n",
-             SystemTime.wYear,
-             SystemTime.wMonth,
-             SystemTime.wDay,
-             SystemTime.wHour,
-             SystemTime.wMinute,
-             SystemTime.wSecond,
-             SystemTime.wMilliseconds,
-             LevelMarker,
-             LogLine);
 }
 } // namespace details
 

@@ -1,5 +1,6 @@
 #pragma once
 #include "ip_packet.hpp"
+#include "tcp_packet.hpp"
 #include "tuntap.hpp"
 #include "udp_packet.hpp"
 
@@ -27,6 +28,14 @@ public:
                 break;
 
             auto udp_pack = result.value();
+
+        } break;
+        case transport_layer::tcp_packet::protocol_type: {
+            auto result = transport_layer::tcp_packet::from_ip_packet(ip_pack);
+            if (!result)
+                break;
+
+            auto tcp_pack = result.value();
 
         } break;
         default:

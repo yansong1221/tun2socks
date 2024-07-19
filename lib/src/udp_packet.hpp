@@ -1,5 +1,7 @@
 #pragma once
+#include "checksum.hpp"
 #include "ip_packet.hpp"
+
 #include <boost/asio.hpp>
 namespace transport_layer {
 
@@ -12,24 +14,6 @@ struct alignas(4) udp_header
     uint16_t length;    // 长度
     uint16_t checksum;  // 校验和
 };
-// 伪头结构体
-struct alignas(4) pseud_v4_udp_header
-{
-    uint32_t src_addr;   // 源IP地址
-    uint32_t dest_addr;  // 目的IP地址
-    uint8_t reserved;    // 预留字段
-    uint8_t protocol;    // 协议号 (UDP协议为17)
-    uint16_t udp_length; // UDP长度
-};
-// IPv6伪头结构体
-struct alignas(4) pseud_v6_udp_header
-{
-    uint8_t src_addr[16];  // 源IP地址
-    uint8_t dest_addr[16]; // 目的IP地址
-    uint32_t length;       // UDP长度
-    uint8_t zero;          // 预留字段
-    uint8_t protocol;      // 协议号 (UDP协议为17)
-};
 
 } // namespace details
 class udp_packet
@@ -37,6 +21,7 @@ class udp_packet
 public:
     constexpr static uint8_t protocol_type = 0x11;
 
+public:
     udp_packet(network_layer::ip_packet::version_type ip_version,
                const boost::asio::ip::udp::endpoint &src_endpoint,
                const boost::asio::ip::udp::endpoint &dest_endpoint,
@@ -63,12 +48,12 @@ public:
         header->src_port = ::htons(src_endpoint_.port());
         header->dest_port = ::htons(dest_endpoint_.port());
         header->length = ::htons(length);
-        header->checksum = udp_checksum(header,
-                                        ip_version_,
-                                        src_endpoint_.address(),
-                                        dest_endpoint_.address(),
-                                        payload_.data(),
-                                        payload_.size());
+        header->checksum = checksum(header,
+                                    ip_version_,
+                                    src_endpoint_.address(),
+                                    dest_endpoint_.address(),
+                                    payload_.data(),
+                                    payload_.size());
         memcpy(header + 1, payload_.data(), payload_.size());
         buffers.commit(length);
     }
@@ -92,12 +77,12 @@ public:
         }
         uint16_t payload_len = total_len - sizeof(details::udp_header);
 
-        if (udp_checksum(header,
-                         ip_pack.version(),
-                         ip_pack.src_address(),
-                         ip_pack.dst_address(),
-                         (const uint8_t *) (header + 1),
-                         payload_len)
+        if (checksum(header,
+                     ip_pack.version(),
+                     ip_pack.src_address(),
+                     ip_pack.dest_address(),
+                     (const uint8_t *) (header + 1),
+                     payload_len)
             != 0) {
             SPDLOG_WARN("Received IPv{0} udp packet Calculation checksum error",
                         (int) ip_pack.version());
@@ -105,7 +90,7 @@ public:
         }
         boost::asio::ip::udp::endpoint src_endpoint(ip_pack.src_address(),
                                                     ::ntohs(header->src_port));
-        boost::asio::ip::udp::endpoint dest_endpoint(ip_pack.dst_address(),
+        boost::asio::ip::udp::endpoint dest_endpoint(ip_pack.dest_address(),
                                                      ::ntohs(header->dest_port));
 
         SPDLOG_INFO("Received IPv{0} udp packet [{1}]:{2} -> [{3}]:{4}",
@@ -122,106 +107,55 @@ public:
     }
 
 private:
-    // 计算校验和函数
-    inline static uint16_t checksum(uint16_t *buf, int len)
-    {
-        uint32_t sum = 0;
-
-        while (len > 1) {
-            sum += *buf++;
-            if (sum & 0x80000000) // 如果高位溢出, 则将高位和低位相加
-                sum = (sum & 0xFFFF) + (sum >> 16);
-            len -= 2;
-        }
-
-        if (len > 0) // 如果还有剩余的字节
-            sum += *(uint8_t *) buf;
-
-        while (sum >> 16)
-            sum = (sum & 0xFFFF) + (sum >> 16);
-
-        return (uint16_t) (~sum);
-    }
-    inline static uint16_t udp_checksum(const details::udp_header *udp,
-                                        network_layer::ip_packet::version_type ip_version,
-                                        const boost::asio::ip::address &src_addr,
-                                        const boost::asio::ip::address &dst_addr,
-                                        const uint8_t *data,
-                                        int data_len)
+    inline static uint16_t checksum(const details::udp_header *udp,
+                                    network_layer::ip_packet::version_type ip_version,
+                                    const boost::asio::ip::address &src_addr,
+                                    const boost::asio::ip::address &dest_addr,
+                                    const uint8_t *data,
+                                    std::size_t data_len)
     {
         switch (ip_version) {
-        case network_layer::ip_packet::version_type::v4:
-            return v4_udp_checksum(udp, src_addr.to_v4(), dst_addr.to_v4(), data, data_len);
-        case network_layer::ip_packet::version_type::v6:
-            return v6_udp_checksum(udp, src_addr.to_v6(), dst_addr.to_v6(), data, data_len);
+        case network_layer::ip_packet::version_type::v4: {
+            // 伪头结构体
+            struct alignas(4) pseud_v4_udp_header
+            {
+                uint32_t src_addr;   // 源IP地址
+                uint32_t dest_addr;  // 目的IP地址
+                uint8_t reserved;    // 预留字段
+                uint8_t protocol;    // 协议号 (UDP协议为17)
+                uint16_t udp_length; // UDP长度
+            } psh{0};
+            psh.src_addr = ::htonl(src_addr.to_v4().to_ulong());
+            psh.dest_addr = ::htonl(dest_addr.to_v4().to_ulong());
+            psh.reserved = 0;
+            psh.protocol = udp_packet::protocol_type;
+            psh.udp_length = htons(sizeof(details::udp_header) + data_len);
+
+            return checksum::checksum(udp, &psh, data, data_len);
+        }
+
+        case network_layer::ip_packet::version_type::v6: {
+            // IPv6伪头结构体
+            struct alignas(4) pseud_v6_udp_header
+            {
+                uint8_t src_addr[16];  // 源IP地址
+                uint8_t dest_addr[16]; // 目的IP地址
+                uint32_t length;       // UDP长度
+                uint8_t zero;          // 预留字段
+                uint8_t protocol;      // 协议号 (UDP协议为17)
+            } psh = {0};
+            memcpy(psh.src_addr, src_addr.to_v6().to_bytes().data(), sizeof(psh.src_addr));
+            memcpy(psh.dest_addr, dest_addr.to_v6().to_bytes().data(), sizeof(psh.dest_addr));
+            psh.zero = 0;
+            psh.protocol = udp_packet::protocol_type;
+            psh.length = htons(sizeof(details::udp_header) + data_len);
+
+            return checksum::checksum(udp, &psh, data, data_len);
+        }
         default:
             break;
         }
         return 0;
-    }
-    inline static uint16_t v4_udp_checksum(const details::udp_header *udp,
-                                           const boost::asio::ip::address_v4 &src_ip,
-                                           const boost::asio::ip::address_v4 &dest_ip,
-                                           const uint8_t *data,
-                                           int data_len)
-    {
-        details::pseud_v4_udp_header psh;
-        psh.src_addr = ::htonl(src_ip.to_ulong());
-        psh.dest_addr = ::htonl(dest_ip.to_ulong());
-        psh.reserved = 0;
-        psh.protocol = udp_packet::protocol_type;
-        psh.udp_length = htons(sizeof(details::udp_header) + data_len);
-
-        int psize = sizeof(details::pseud_v4_udp_header) + sizeof(details::udp_header) + data_len;
-
-        boost::asio::streambuf buffers;
-        auto buffer = buffers.prepare(psize);
-
-        auto buf = boost::asio::buffer_cast<uint8_t *>(buffer);
-
-        // 构建校验和数据
-        memcpy(buf, &psh, sizeof(details::pseud_v4_udp_header));
-        memcpy(buf + sizeof(details::pseud_v4_udp_header), udp, sizeof(details::udp_header));
-        memcpy(buf + sizeof(details::pseud_v4_udp_header) + sizeof(details::udp_header),
-               data,
-               data_len);
-
-        memcpy(buf + sizeof(details::pseud_v4_udp_header), udp, sizeof(details::udp_header));
-
-        // 计算校验和
-        return checksum((uint16_t *) buf, psize);
-    }
-    inline static uint16_t v6_udp_checksum(const details::udp_header *udp,
-                                           const boost::asio::ip::address_v6 &src_ip,
-                                           const boost::asio::ip::address_v6 &dest_ip,
-                                           const uint8_t *data,
-                                           int data_len)
-    {
-        details::pseud_v6_udp_header psh = {0};
-        memcpy(psh.src_addr, src_ip.to_bytes().data(), sizeof(psh.src_addr));
-        memcpy(psh.dest_addr, dest_ip.to_bytes().data(), sizeof(psh.dest_addr));
-        psh.zero = 0;
-        psh.protocol = udp_packet::protocol_type;
-        psh.length = htons(sizeof(details::udp_header) + data_len);
-
-        int psize = sizeof(details::pseud_v6_udp_header) + sizeof(details::udp_header) + data_len;
-
-        boost::asio::streambuf buffers;
-        auto buffer = buffers.prepare(psize);
-
-        auto buf = boost::asio::buffer_cast<uint8_t *>(buffer);
-
-        // 构建校验和数据
-        memcpy(buf, &psh, sizeof(details::pseud_v6_udp_header));
-        memcpy(buf + sizeof(details::pseud_v6_udp_header), udp, sizeof(details::udp_header));
-        memcpy(buf + sizeof(details::pseud_v6_udp_header) + sizeof(details::udp_header),
-               data,
-               data_len);
-
-        memcpy(buf + sizeof(details::pseud_v6_udp_header), udp, sizeof(details::udp_header));
-
-        // 计算校验和
-        return checksum((uint16_t *) buf, psize);
     }
 
 private:

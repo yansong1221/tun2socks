@@ -1,7 +1,9 @@
 #pragma once
+#include "checksum.hpp"
 #include <boost/asio.hpp>
 #include <optional>
 #include <spdlog/spdlog.h>
+
 namespace network_layer {
 
 enum class icmp_type : uint8_t {
@@ -43,8 +45,7 @@ struct alignas(4) tcp_header
 
 struct alignas(4) ipv4_header
 {
-    uint8_t ihl : 4;
-    uint8_t version : 4;
+    uint8_t version_ihl;
     uint8_t tos;
     uint16_t tot_len;
     uint16_t id;
@@ -74,19 +75,19 @@ public:
 
     explicit ip_packet(version_type version,
                        const boost::asio::ip::address &src_addr,
-                       const boost::asio::ip::address &dst_addr,
+                       const boost::asio::ip::address &dest_addr,
                        uint8_t protocol,
                        const boost::asio::const_buffer &payload_data)
         : version_(version)
         , src_addr_(src_addr)
-        , dst_addr_(dst_addr)
+        , dest_addr_(dest_addr)
         , protocol_(protocol)
         , payload_data_(payload_data)
     {}
 
     version_type version() const { return version_; }
     boost::asio::ip::address src_address() const { return src_addr_; }
-    boost::asio::ip::address dst_address() const { return dst_addr_; }
+    boost::asio::ip::address dest_address() const { return dest_addr_; }
     uint8_t next_protocol() const { return protocol_; }
     boost::asio::const_buffer payload_data() const { return payload_data_; }
 
@@ -114,9 +115,9 @@ public:
             header->ttl = 0x30;
             header->protocol = protocol_;
             header->saddr = ::htonl(src_addr_.to_v4().to_ulong());
-            header->daddr = ::htonl(dst_addr_.to_v4().to_ulong());
+            header->daddr = ::htonl(dest_addr_.to_v4().to_ulong());
 
-            header->check = ip_checksum((const uint8_t *) (header), header_len);
+            header->check = checksum::checksum((const uint8_t *) (header), header_len);
             memcpy(header + 1, payload_data_.data(), payload_data_.size());
 
             buffer.commit(tot_len);
@@ -127,7 +128,7 @@ public:
 
             auto payload_len = boost::asio::buffer_size(payload_data_);
             auto src_addr_bytes = src_addr_.to_v6().to_bytes();
-            auto dst_addr_bytes = dst_addr_.to_v6().to_bytes();
+            auto dst_addr_bytes = dest_addr_.to_v6().to_bytes();
 
             auto header_buffer = buffer.prepare(header_len);
 
@@ -172,7 +173,7 @@ public:
             }
 
             auto header = boost::asio::buffer_cast<const details::ipv4_header *>(buffers);
-            auto header_len = header->ihl * 4;
+            auto header_len = (header->version_ihl & 0x0F) * 4;
             auto total_len = ntohs(header->tot_len);
 
             if (header_len < sizeof(details::ipv4_header) || total_len != len
@@ -181,7 +182,7 @@ public:
                 return std::nullopt;
             }
 
-            if (ip_checksum((const uint8_t *) header, header_len) != 0) {
+            if (checksum::checksum((const uint8_t *) header, header_len) != 0) {
                 SPDLOG_WARN("Received IPv4 packet Calculation checksum error");
                 return std::nullopt;
             }
@@ -260,22 +261,11 @@ private:
         value |= flow & 0x000FFFFF;
         return value;
     }
-    inline static uint16_t ip_checksum(const uint8_t *buffer, std::size_t len)
-    {
-        uint32_t sum = 0;
-        for (; len > 1; len -= 2, buffer += 2)
-            sum += *(uint16_t *) buffer;
-        if (len)
-            sum += *buffer;
-        sum = (sum >> 16) + (sum & 0xffff);
-        sum += (sum >> 16);
-        return (uint16_t) (~sum);
-    }
 
 private:
     version_type version_;
     boost::asio::ip::address src_addr_;
-    boost::asio::ip::address dst_addr_;
+    boost::asio::ip::address dest_addr_;
     uint8_t protocol_;
     boost::asio::const_buffer payload_data_;
 };
