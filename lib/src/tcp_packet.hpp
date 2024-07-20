@@ -1,5 +1,7 @@
 #pragma once
 #include "ip_packet.hpp"
+#include <format>
+#include <boost/container_hash/hash.hpp>
 
 namespace transport_layer {
 
@@ -10,7 +12,8 @@ struct alignas(4) tcp_header
     uint16_t dest_port; // 目的端口号
     uint32_t seq_num;   // 序列号
     uint32_t ack_num;   // 确认号
-    uint8_t data_offset_reserved;
+    uint8_t reserved : 4;
+    uint8_t data_offset : 4;
     uint8_t flags;           // 标志字段
     uint16_t window_size;    // 窗口大小
     uint16_t checksum;       // 校验和
@@ -23,21 +26,96 @@ class tcp_packet
 public:
     constexpr static uint8_t protocol_type = 0x06;
 
+    struct endpoint_pair_type
+    {
+        boost::asio::ip::tcp::endpoint src;
+        boost::asio::ip::tcp::endpoint dest;
+
+        bool operator==(const endpoint_pair_type &other) const
+        {
+            return src == other.src && dest == other.dest;
+        }
+
+        endpoint_pair_type swap() const
+        {
+            endpoint_pair_type other;
+            other.src = dest;
+            other.dest = src;
+            return other;
+        }
+
+        std::string to_string() const
+        {
+            return std::format("[{0}]:{1} -> [{2}]:{3}",
+                               src.address().to_string(),
+                               src.port(),
+                               dest.address().to_string(),
+                               dest.port());
+        }
+    };
+
 public:
-    explicit tcp_packet(const boost::asio::ip::tcp::endpoint &src_endpoint,
-                        const boost::asio::ip::tcp::endpoint &dest_endpoint,
+    explicit tcp_packet(network_layer::ip_packet::version_type ip_version,
+                        const endpoint_pair_type &_endpoint_pair,
                         uint32_t seq_num,
                         uint32_t ack_num,
                         uint8_t flags,
-                        const boost::asio::const_buffer &payload)
-        : src_endpoint_(src_endpoint)
-        , dest_endpoint_(dest_endpoint)
+                        const boost::asio::const_buffer &payload = boost::asio::const_buffer())
+        : ip_version_(ip_version)
+        , endpoint_pair_(_endpoint_pair)
         , seq_num_(seq_num)
         , ack_num_(ack_num)
         , flags_(flags)
         , payload_(payload)
 
     {}
+
+    const tcp_packet::endpoint_pair_type &endpoint_pair() const { return endpoint_pair_; }
+    const boost::asio::const_buffer &payload() const { return payload_; }
+    uint8_t flags() const { return flags_; }
+    uint32_t seq_num() const { return seq_num_; }
+    uint32_t ack_num() const { return ack_num_; }
+    network_layer::ip_packet::version_type ip_version() const { return ip_version_; }
+
+    template<typename Allocator>
+    void make_packet(boost::asio::basic_streambuf<Allocator> &buffers) const
+    {
+        uint16_t length = sizeof(details::tcp_header) + payload_.size();
+
+        auto buf = buffers.prepare(length);
+        memset(buf.data(), 0, length);
+
+        auto header = boost::asio::buffer_cast<details::tcp_header *>(buf);
+        header->src_port = ::htons(endpoint_pair_.src.port());
+        header->dest_port = ::htons(endpoint_pair_.dest.port());
+        header->seq_num = ::htonl(seq_num_);
+        header->ack_num = ::htonl(ack_num_);
+        header->data_offset = sizeof(details::tcp_header) / 4;
+        header->flags = flags_;
+        header->window_size = 0xFFFF;
+        header->checksum = checksum(header,
+                                    ip_version_,
+                                    endpoint_pair_.src.address(),
+                                    endpoint_pair_.dest.address(),
+                                    (const uint8_t *) payload_.data(),
+                                    payload_.size());
+        memcpy(header + 1, payload_.data(), payload_.size());
+        buffers.commit(length);
+    }
+    template<typename Allocator>
+    void make_ip_packet(boost::asio::basic_streambuf<Allocator> &buffers) const
+    {
+        boost::asio::streambuf payload;
+        make_packet(payload);
+
+        network_layer::ip_packet ip_pack(ip_version_,
+                                         endpoint_pair_.src.address(),
+                                         endpoint_pair_.dest.address(),
+                                         tcp_packet::protocol_type,
+                                         payload.data());
+        ip_pack.make_packet(buffers);
+    }
+
     inline static std::optional<tcp_packet> from_ip_packet(const network_layer::ip_packet &ip_pack)
     {
         auto buffer = ip_pack.payload_data();
@@ -48,9 +126,7 @@ public:
         }
 
         auto header = boost::asio::buffer_cast<const details::tcp_header *>(buffer);
-
-        uint8_t data_offset = (header->data_offset_reserved & 0xf0) >> 4;
-        auto header_len = data_offset * 4;
+        auto header_len = header->data_offset * 4;
 
         if (buffer.size() < header_len) {
             SPDLOG_WARN("Received tcp packet length error");
@@ -68,23 +144,20 @@ public:
                         (int) ip_pack.version());
             return std::nullopt;
         }
+        endpoint_pair_type _endpoint_pair;
+        _endpoint_pair.src = boost::asio::ip::tcp::endpoint(ip_pack.src_address(),
+                                                            ::ntohs(header->src_port));
+        _endpoint_pair.dest = boost::asio::ip::tcp::endpoint(ip_pack.dest_address(),
+                                                             ::ntohs(header->dest_port));
 
-        boost::asio::ip::tcp::endpoint src_endpoint(ip_pack.src_address(),
-                                                    ::ntohs(header->src_port));
-        boost::asio::ip::tcp::endpoint dest_endpoint(ip_pack.dest_address(),
-                                                     ::ntohs(header->dest_port));
-
-        SPDLOG_INFO("Received IPv{0} tcp packet [{1}]:{2} -> [{3}]:{4}",
+        SPDLOG_INFO("Received IPv{0} tcp packet {1}",
                     (int) ip_pack.version(),
-                    src_endpoint.address().to_string(),
-                    src_endpoint.port(),
-                    dest_endpoint.address().to_string(),
-                    dest_endpoint.port());
+                    _endpoint_pair.to_string());
 
         buffer += header_len;
 
-        return tcp_packet(src_endpoint,
-                          dest_endpoint,
+        return tcp_packet(ip_pack.version(),
+                          _endpoint_pair,
                           ntohl(header->seq_num),
                           ntohl(header->ack_num),
                           header->flags,
@@ -142,12 +215,45 @@ private:
     }
 
 private:
+    network_layer::ip_packet::version_type ip_version_;
     uint32_t seq_num_;
     uint32_t ack_num_;
     uint8_t flags_;
-    boost::asio::ip::tcp::endpoint src_endpoint_;
-    boost::asio::ip::tcp::endpoint dest_endpoint_;
+    endpoint_pair_type endpoint_pair_;
 
     boost::asio::const_buffer payload_;
 };
 } // namespace transport_layer
+
+namespace std {
+template<>
+struct hash<boost::asio::ip::tcp::endpoint>
+{
+    typedef boost::asio::ip::tcp::endpoint argument_type;
+    typedef std::size_t result_type;
+    inline result_type operator()(argument_type const &s) const
+    {
+        std::string temp = s.address().to_string();
+        std::size_t seed = 0;
+        boost::hash_combine(seed, temp);
+        boost::hash_combine(seed, s.port());
+        return seed;
+    }
+};
+
+template<>
+struct hash<transport_layer::tcp_packet::endpoint_pair_type>
+{
+    typedef transport_layer::tcp_packet::endpoint_pair_type argument_type;
+    typedef std::size_t result_type;
+    inline result_type operator()(argument_type const &s) const
+    {
+        result_type const h1(std::hash<boost::asio::ip::tcp::endpoint>{}(s.src));
+        result_type const h2(std::hash<boost::asio::ip::tcp::endpoint>{}(s.dest));
+        std::size_t seed = 0;
+        boost::hash_combine(seed, h1);
+        boost::hash_combine(seed, h2);
+        return seed;
+    }
+};
+} // namespace std

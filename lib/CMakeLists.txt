@@ -21,6 +21,7 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/ip_packet.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_packet.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_packet.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_stream.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/ip_layer_stack.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/basic_tuntap.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp

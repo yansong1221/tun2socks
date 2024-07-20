@@ -1,6 +1,6 @@
 #pragma once
 #include <boost/asio.hpp>
-
+namespace tuntap {
 template<typename Device>
 class basic_tuntap
 {
@@ -34,3 +34,4 @@ private:
     boost::asio::io_context &ioc_;
     device_type device_;
 };
+} // namespace tuntap

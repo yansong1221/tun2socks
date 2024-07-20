@@ -28,24 +28,10 @@ struct alignas(4) icmp_header
     uint16_t identifier;
     uint16_t sequenceNumber;
 };
-
-struct alignas(4) tcp_header
-{
-    uint16_t sourcePort;           // 源端口号
-    uint16_t destPort;             // 目标端口号
-    uint32_t sequenceNumber;       // 序列号
-    uint32_t acknowledgmentNumber; // 确认号
-    uint8_t dataOffset;            // 数据偏移 + 保留字段
-    uint8_t flags;                 // 标志位
-    uint16_t windowSize;           // 窗口大小
-    uint16_t checksum;             // 校验和
-    uint16_t urgentPointer;        // 紧急指针
-    // 可选的选项字段可以在需要时添加
-};
-
 struct alignas(4) ipv4_header
 {
-    uint8_t version_ihl;
+    uint8_t ihl : 4;
+    uint8_t version : 4;
     uint8_t tos;
     uint16_t tot_len;
     uint16_t id;
@@ -173,7 +159,7 @@ public:
             }
 
             auto header = boost::asio::buffer_cast<const details::ipv4_header *>(buffers);
-            auto header_len = (header->version_ihl & 0x0F) * 4;
+            auto header_len = header->ihl * 4;
             auto total_len = ntohs(header->tot_len);
 
             if (header_len < sizeof(details::ipv4_header) || total_len != len

@@ -1,13 +1,14 @@
 #pragma once
 #include "ip_packet.hpp"
 #include "tcp_packet.hpp"
+#include "tcp_stream.hpp"
 #include "tuntap.hpp"
 #include "udp_packet.hpp"
 
 class ip_layer_stack
 {
 public:
-    explicit ip_layer_stack(tuntap &_tuntap)
+    explicit ip_layer_stack(tuntap::tuntap &_tuntap)
         : tuntap_(_tuntap)
     {}
     void start()
@@ -36,6 +37,16 @@ public:
                 break;
 
             auto tcp_pack = result.value();
+            auto endpoint_pair = tcp_pack.endpoint_pair();
+
+            transport_layer::tcp_stream::ptr tcp_stream = tcp_stream_map_[endpoint_pair];
+            if (!tcp_stream) {
+                tcp_stream = std::make_shared<transport_layer::tcp_stream>(tuntap_);
+                tcp_stream_map_[endpoint_pair] = tcp_stream;
+            }
+            co_await tcp_stream->on_tcp_packet(tcp_pack);
+            if (tcp_stream->closed())
+                tcp_stream_map_.erase(endpoint_pair);
 
         } break;
         default:
@@ -52,12 +63,16 @@ public:
             if (ec)
                 co_return;
             buffer.commit(bytes);
-            boost::asio::co_spawn(tuntap_.get_executor(),
+            co_await start_ip_packet(std::move(buffer));
+            /*boost::asio::co_spawn(tuntap_.get_executor(),
                                   start_ip_packet(std::move(buffer)),
-                                  boost::asio::detached);
+                                  boost::asio::detached);*/
         }
     };
 
 private:
-    tuntap &tuntap_;
+    tuntap::tuntap &tuntap_;
+    std::unordered_map<transport_layer::tcp_packet::endpoint_pair_type,
+                       transport_layer::tcp_stream::ptr>
+        tcp_stream_map_;
 };

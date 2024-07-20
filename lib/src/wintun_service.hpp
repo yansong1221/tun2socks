@@ -37,6 +37,13 @@ public:
     {
         return boost::asio::async_initiate<ReadToken, void(boost::system::error_code, std::size_t)>(
             [this](auto &&handler, auto &&buffers) {
+                boost::system::error_code read_error;
+                auto bytes_transferred = wintun_session_->receive_packet(buffers, read_error);
+                if (read_error || bytes_transferred != 0) {
+                    handler(read_error, bytes_transferred);
+                    return;
+                }
+
                 receive_event_.async_wait(
                     [this, handler = std::move(handler), buffers = std::move(buffers)](
                         const boost::system::error_code &ec) mutable {
@@ -44,10 +51,7 @@ public:
                             handler(ec, 0);
                             return;
                         }
-                        boost::system::error_code read_error;
-                        auto bytes_transferred = wintun_session_->receive_packet(buffers,
-                                                                                 read_error);
-                        handler(read_error, bytes_transferred);
+                        this->async_read_some(buffers, handler);
                     });
             },
             handler,

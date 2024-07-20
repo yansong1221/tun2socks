@@ -319,7 +319,7 @@ public:
     template<typename ConstBufferSequence>
     inline void send_packets(const ConstBufferSequence &buffer)
     {
-        DWORD send_size = (DWORD) boost::asio::buffer_size(buffer);
+        DWORD send_size = (DWORD) boost::asio::buffer_size(buffer); 
         if (send_size == 0)
             return;
 
