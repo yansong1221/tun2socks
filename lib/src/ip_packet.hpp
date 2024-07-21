@@ -1,4 +1,5 @@
 #pragma once
+#include "address_pair.hpp"
 #include "checksum.hpp"
 #include <boost/asio.hpp>
 #include <optional>
@@ -57,31 +58,24 @@ struct alignas(4) ipv6_header
 class ip_packet
 {
 public:
-    enum class version_type : uint8_t { v4 = 4, v6 = 6 };
-
-    explicit ip_packet(version_type version,
-                       const boost::asio::ip::address &src_addr,
-                       const boost::asio::ip::address &dest_addr,
-                       uint8_t protocol,
-                       const boost::asio::const_buffer &payload_data)
-        : version_(version)
-        , src_addr_(src_addr)
-        , dest_addr_(dest_addr)
+    ip_packet(const network_layer::address_pair_type &address_pair,
+              uint8_t protocol,
+              const boost::asio::const_buffer &payload_data)
+        : address_pair_(address_pair)
         , protocol_(protocol)
         , payload_data_(payload_data)
     {}
 
-    version_type version() const { return version_; }
-    boost::asio::ip::address src_address() const { return src_addr_; }
-    boost::asio::ip::address dest_address() const { return dest_addr_; }
+    const network_layer::address_pair_type &address_pair() const { return address_pair_; }
+
     uint8_t next_protocol() const { return protocol_; }
     boost::asio::const_buffer payload_data() const { return payload_data_; }
 
     template<typename Allocator>
     void make_packet(boost::asio::basic_streambuf<Allocator> &buffer) const
     {
-        switch (version_) {
-        case version_type::v4: {
+        switch (address_pair_.ip_version()) {
+        case 4: {
             constexpr auto header_len = sizeof(details::ipv4_header);
 
             constexpr uint8_t ihl = header_len / 4;
@@ -100,8 +94,8 @@ public:
             header->id = ::htons(index++);
             header->ttl = 0x30;
             header->protocol = protocol_;
-            header->saddr = ::htonl(src_addr_.to_v4().to_ulong());
-            header->daddr = ::htonl(dest_addr_.to_v4().to_ulong());
+            header->saddr = ::htonl(address_pair_.src.to_v4().to_ulong());
+            header->daddr = ::htonl(address_pair_.dest.to_v4().to_ulong());
 
             header->check = checksum::checksum((const uint8_t *) (header), header_len);
             memcpy(header + 1, payload_data_.data(), payload_data_.size());
@@ -109,12 +103,12 @@ public:
             buffer.commit(tot_len);
 
         } break;
-        case version_type::v6: {
+        case 6: {
             constexpr auto header_len = sizeof(details::ipv6_header);
 
             auto payload_len = boost::asio::buffer_size(payload_data_);
-            auto src_addr_bytes = src_addr_.to_v6().to_bytes();
-            auto dst_addr_bytes = dest_addr_.to_v6().to_bytes();
+            auto src_addr_bytes = address_pair_.src.to_v6().to_bytes();
+            auto dst_addr_bytes = address_pair_.dest.to_v6().to_bytes();
 
             auto header_buffer = buffer.prepare(header_len);
 
@@ -141,21 +135,21 @@ public:
         }
     }
     template<typename ConstBufferSequence>
-    static std::optional<ip_packet> from_packet(ConstBufferSequence &&buffers)
+    static std::unique_ptr<ip_packet> from_packet(ConstBufferSequence &&buffers)
     {
         auto buf = boost::asio::buffer_cast<const uint8_t *>(buffers);
         auto len = boost::asio::buffer_size(buffers);
 
         if (len == 0) {
             SPDLOG_INFO("Received packet is empty");
-            return std::nullopt;
+            return nullptr;
         }
         uint8_t version = (buf[0] & 0xf0) >> 4;
         switch (version) {
-        case (uint8_t) version_type::v4: {
+        case 4: {
             if (len < sizeof(details::ipv4_header)) {
                 SPDLOG_INFO("Received packet without room for an IPv4 header");
-                return std::nullopt;
+                return nullptr;
             }
 
             auto header = boost::asio::buffer_cast<const details::ipv4_header *>(buffers);
@@ -165,42 +159,28 @@ public:
             if (header_len < sizeof(details::ipv4_header) || total_len != len
                 || total_len < header_len) {
                 SPDLOG_INFO("Received packet without room for an IPv4 header");
-                return std::nullopt;
+                return nullptr;
             }
 
             if (checksum::checksum((const uint8_t *) header, header_len) != 0) {
                 SPDLOG_WARN("Received IPv4 packet Calculation checksum error");
-                return std::nullopt;
+                return nullptr;
             }
 
-            boost::asio::ip::address_v4 src_addr(::htonl(header->saddr));
-            boost::asio::ip::address_v4 dst_addr(::htonl(header->daddr));
+            address_pair_type addr_pair(::htonl(header->saddr), ::htonl(header->daddr));
 
-            SPDLOG_DEBUG("IPv4 Packet [{0}] -> [{1}] protocol:[0x{2:x}]",
-                         src_addr.to_string(),
-                         dst_addr.to_string(),
+            SPDLOG_DEBUG("Received IPv4 packet {0} protocol:[0x{1:x}]",
+                         addr_pair.to_string(),
                          header->protocol);
 
             buffers += header_len;
-            //if (auto options_len = header_len - sizeof(details::ipv4_header); options_len > 0) {
-            //    /* auto data = boost::asio::buffer_cast<const uint8_t *>(buffers);
-            //    auto options_data = boost::asio::const_buffer(data, options_len);
 
-            //    SPDLOG_INFO("Received packet without room for an IPv4 header");*/
-            //    // 跳过
-            //    buffers += options_len;
-            //}
-
-            return ip_packet(ip_packet::version_type::v4,
-                             boost::asio::ip::address(src_addr),
-                             boost::asio::ip::address(dst_addr),
-                             header->protocol,
-                             buffers);
+            return std::make_unique<ip_packet>(addr_pair, header->protocol, buffers);
         } break;
-        case (uint8_t) version_type::v6: {
+        case 6: {
             if (len < sizeof(details::ipv6_header)) {
                 SPDLOG_INFO("Received packet without room for an IPv6 header");
-                return std::nullopt;
+                return nullptr;
             }
             auto header = boost::asio::buffer_cast<const details::ipv6_header *>(buffers);
 
@@ -217,26 +197,19 @@ public:
             memcpy(src_addr_bytes.data(), header->src_addr, sizeof(header->src_addr));
             memcpy(dst_addr_bytes.data(), header->dest_addr, sizeof(header->dest_addr));
 
-            boost::asio::ip::address_v6 src_addr(src_addr_bytes);
-            boost::asio::ip::address_v6 dst_addr(dst_addr_bytes);
+            network_layer::address_pair_type addr_pair(src_addr_bytes, dst_addr_bytes);
 
-            SPDLOG_DEBUG("IPv6 Packet [{0}] -> [{1}] protocol:[0x{2:x}]",
-                         src_addr.to_string(),
-                         dst_addr.to_string(),
+            SPDLOG_DEBUG("Received IPv6 packet {0} protocol:[0x{1:x}]",
+                         addr_pair.to_string(),
                          header->next_header);
 
             buffers += sizeof(details::ipv6_header);
-
-            return ip_packet(ip_packet::version_type::v6,
-                             boost::asio::ip::address(src_addr),
-                             boost::asio::ip::address(dst_addr),
-                             header->next_header,
-                             buffers);
+            return std::make_unique<ip_packet>(addr_pair, header->next_header, buffers);
         } break;
         default:
             break;
         }
-        return std::nullopt;
+        return nullptr;
     } // namespace details
 private:
     inline static uint32_t make_version_traffic_flow(uint8_t version, uint8_t traffic, uint32_t flow)
@@ -249,9 +222,7 @@ private:
     }
 
 private:
-    version_type version_;
-    boost::asio::ip::address src_addr_;
-    boost::asio::ip::address dest_addr_;
+    network_layer::address_pair_type address_pair_;
     uint8_t protocol_;
     boost::asio::const_buffer payload_data_;
 };

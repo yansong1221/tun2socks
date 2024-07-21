@@ -22,19 +22,12 @@ public:
     constexpr static uint8_t protocol_type = 0x11;
 
 public:
-    udp_packet(network_layer::ip_packet::version_type ip_version,
-               const boost::asio::ip::udp::endpoint &src_endpoint,
-               const boost::asio::ip::udp::endpoint &dest_endpoint,
-               const boost::asio::const_buffer &payload)
-        : ip_version_(ip_version)
-        , src_endpoint_(src_endpoint)
-        , dest_endpoint_(dest_endpoint)
+    udp_packet(const udp_endpoint_pair &endpoint_pair, const boost::asio::const_buffer &payload)
+        : endpoint_pair_(endpoint_pair)
         , payload_(payload)
     {}
-    inline network_layer::ip_packet::version_type ip_version() const { return ip_version_; }
+    inline const udp_endpoint_pair &endpoint_pair() const { return endpoint_pair_; }
     inline boost::asio::const_buffer payload() const { return payload_; }
-    inline boost::asio::ip::udp::endpoint src_endpoint() const { return src_endpoint_; }
-    inline boost::asio::ip::udp::endpoint dest_endpoint() const { return dest_endpoint_; }
 
     template<typename Allocator>
     void make_packet(boost::asio::basic_streambuf<Allocator> &buffers)
@@ -45,77 +38,61 @@ public:
         memset(buf.data(), 0, length);
 
         auto header = boost::asio::buffer_cast<details::udp_header *>(buf);
-        header->src_port = ::htons(src_endpoint_.port());
-        header->dest_port = ::htons(dest_endpoint_.port());
+        header->src_port = ::htons(endpoint_pair_.src.port());
+        header->dest_port = ::htons(endpoint_pair_.dest.port());
         header->length = ::htons(length);
-        header->checksum = checksum(header,
-                                    ip_version_,
-                                    src_endpoint_.address(),
-                                    dest_endpoint_.address(),
-                                    payload_.data(),
-                                    payload_.size());
+        header->checksum = checksum(header, endpoint_pair_.to_address_pair(), payload_);
+
         memcpy(header + 1, payload_.data(), payload_.size());
         buffers.commit(length);
     }
 
-    inline static std::optional<udp_packet> from_ip_packet(const network_layer::ip_packet &ip_pack)
+    inline static std::unique_ptr<udp_packet> from_ip_packet(const network_layer::ip_packet &ip_pack)
     {
         if (ip_pack.next_protocol() != udp_packet::protocol_type)
-            return std::nullopt;
+            return nullptr;
 
         auto buffer = ip_pack.payload_data();
         if (buffer.size() < sizeof(details::udp_header)) {
             SPDLOG_INFO("Received packet without room for an upd header");
-            return std::nullopt;
+            return nullptr;
         }
 
         auto header = boost::asio::buffer_cast<const details::udp_header *>(buffer);
         uint16_t total_len = ::ntohs(header->length);
         if (total_len != buffer.size()) {
             SPDLOG_WARN("Received udp packet length error");
-            return std::nullopt;
+            return nullptr;
         }
         uint16_t payload_len = total_len - sizeof(details::udp_header);
 
         if (checksum(header,
-                     ip_pack.version(),
-                     ip_pack.src_address(),
-                     ip_pack.dest_address(),
-                     (const uint8_t *) (header + 1),
-                     payload_len)
+                     ip_pack.address_pair(),
+                     boost::asio::const_buffer((const uint8_t *) (header + 1), payload_len))
             != 0) {
             SPDLOG_WARN("Received IPv{0} udp packet Calculation checksum error",
-                        (int) ip_pack.version());
-            return std::nullopt;
+                        ip_pack.address_pair().ip_version());
+            return nullptr;
         }
-        boost::asio::ip::udp::endpoint src_endpoint(ip_pack.src_address(),
-                                                    ::ntohs(header->src_port));
-        boost::asio::ip::udp::endpoint dest_endpoint(ip_pack.dest_address(),
-                                                     ::ntohs(header->dest_port));
+        udp_endpoint_pair point_pair(ip_pack.address_pair(),
+                                     ::ntohs(header->src_port),
+                                     ::ntohs(header->dest_port));
 
-        SPDLOG_INFO("Received IPv{0} udp packet [{1}]:{2} -> [{3}]:{4}",
-                    (int) ip_pack.version(),
-                    src_endpoint.address().to_string(),
-                    src_endpoint.port(),
-                    dest_endpoint.address().to_string(),
-                    dest_endpoint.port());
+        SPDLOG_INFO("Received IPv{0} udp packet {1}",
+                    ip_pack.address_pair().ip_version(),
+                    point_pair.to_string());
 
-        return udp_packet(ip_pack.version(),
-                          src_endpoint,
-                          dest_endpoint,
-                          boost::asio::const_buffer(header + 1, payload_len));
+        return std::make_unique<udp_packet>(point_pair,
+                                            boost::asio::const_buffer(header + 1, payload_len));
     }
 
 private:
     inline static uint16_t checksum(const details::udp_header *udp,
-                                    network_layer::ip_packet::version_type ip_version,
-                                    const boost::asio::ip::address &src_addr,
-                                    const boost::asio::ip::address &dest_addr,
-                                    const uint8_t *data,
-                                    std::size_t data_len)
+                                    const network_layer::address_pair_type &address_pair,
+                                    const boost::asio::const_buffer &payload)
     {
-        switch (ip_version) {
-        case network_layer::ip_packet::version_type::v4: {
+        switch (address_pair.ip_version()) {
+        case 4: {
             // 伪头结构体
             struct alignas(4) pseud_v4_udp_header
             {
@@ -125,16 +102,16 @@ private:
                 uint8_t protocol;    // 协议号 (UDP协议为17)
                 uint16_t udp_length; // UDP长度
             } psh{0};
-            psh.src_addr = ::htonl(src_addr.to_v4().to_ulong());
-            psh.dest_addr = ::htonl(dest_addr.to_v4().to_ulong());
+            psh.src_addr = ::htonl(address_pair.src.to_v4().to_ulong());
+            psh.dest_addr = ::htonl(address_pair.dest.to_v4().to_ulong());
             psh.reserved = 0;
             psh.protocol = udp_packet::protocol_type;
-            psh.udp_length = htons(sizeof(details::udp_header) + data_len);
+            psh.udp_length = htons(sizeof(details::udp_header) + payload.size());
 
-            return checksum::checksum(udp, &psh, data, data_len);
+            return checksum::checksum(udp, &psh, (const uint8_t *) payload.data(), payload.size());
         }
 
-        case network_layer::ip_packet::version_type::v6: {
+        case 6: {
             // IPv6伪头结构体
             struct alignas(4) pseud_v6_udp_header
             {
@@ -144,13 +121,15 @@ private:
                 uint8_t zero;          // 预留字段
                 uint8_t protocol;      // 协议号 (UDP协议为17)
             } psh = {0};
-            memcpy(psh.src_addr, src_addr.to_v6().to_bytes().data(), sizeof(psh.src_addr));
-            memcpy(psh.dest_addr, dest_addr.to_v6().to_bytes().data(), sizeof(psh.dest_addr));
+            memcpy(psh.src_addr, address_pair.src.to_v6().to_bytes().data(), sizeof(psh.src_addr));
+            memcpy(psh.dest_addr,
+                   address_pair.dest.to_v6().to_bytes().data(),
+                   sizeof(psh.dest_addr));
             psh.zero = 0;
             psh.protocol = udp_packet::protocol_type;
-            psh.length = htons(sizeof(details::udp_header) + data_len);
+            psh.length = htons(sizeof(details::udp_header) + payload.size());
 
-            return checksum::checksum(udp, &psh, data, data_len);
+            return checksum::checksum(udp, &psh, (const uint8_t *) payload.data(), payload.size());
         }
         default:
             break;
@@ -159,9 +138,7 @@ private:
     }
 
 private:
-    network_layer::ip_packet::version_type ip_version_;
-    boost::asio::ip::udp::endpoint src_endpoint_;
-    boost::asio::ip::udp::endpoint dest_endpoint_;
+    udp_endpoint_pair endpoint_pair_;
     boost::asio::const_buffer payload_;
 };
 
