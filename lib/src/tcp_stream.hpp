@@ -101,6 +101,7 @@ public:
         auto flags = packet.header_data().flags;
         auto seq_num = packet.header_data().seq_num;
         auto ack_num = packet.header_data().ack_num;
+        auto window_size = packet.header_data().window_size;
 
         switch (state_) {
         case tcp_state::ts_closed:
@@ -152,6 +153,7 @@ public:
 
             next_server_ack_num_ = seq_num + 1;
             next_client_ack_num_ = server_seq_num_ + 1;
+            client_window_size_ = window_size;
 
             tcp_packet::tcp_flags flags;
             flags.flag.syn = 1;
@@ -162,9 +164,6 @@ public:
 
         } break;
         case tcp_state::ts_syn_rcvd: {
-            auto flags = packet.header_data().flags;
-            auto seq_num = packet.header_data().seq_num;
-            auto ack_num = packet.header_data().ack_num;
             if (!flags.flag.ack) {
                 co_return;
             }
@@ -172,17 +171,14 @@ public:
             if (ack_num != next_client_ack_num_ || seq_num != next_server_ack_num_) {
                 co_return;
             }
-            server_seq_num_++;
+            server_seq_num_ = next_client_ack_num_;
+            client_window_size_ = window_size;
 
             state_ = tcp_state::ts_established;
             boost::asio::co_spawn(socket_.get_executor(), start_read(), boost::asio::detached);
             co_return;
         } break;
         case tcp_state::ts_established: {
-            auto flags = packet.header_data().flags;
-            auto seq_num = packet.header_data().seq_num;
-            auto ack_num = packet.header_data().ack_num;
-
             if (!flags.flag.ack) {
                 co_return;
             }
@@ -193,27 +189,19 @@ public:
                 state_ = tcp_state::ts_close_wait;
                 co_return;
             }
+            client_window_size_ = window_size;
+
             //结束包 进行4次挥手
             if (flags.flag.fin) {
-                {
-                    tcp_packet::header header_data;
-                    header_data.seq_num = server_seq_num_;
-                    header_data.ack_num = seq_num + 1;
-                    header_data.flags.flag.ack = true;
+                next_server_ack_num_++;
 
-                    tcp_packet tcp_pack(remote_endpoint_pair_, header_data);
-                    co_await write_tuntap_tcp_packet(tcp_pack);
-                }
-                {
-                    tcp_packet::header header_data;
-                    header_data.seq_num = server_seq_num_;
-                    header_data.ack_num = seq_num + 1;
-                    header_data.flags.flag.fin = true;
-                    header_data.flags.flag.ack = true;
+                tcp_packet::tcp_flags flags;
+                flags.flag.ack = true;
+                co_await write_packet(flags);
 
-                    tcp_packet tcp_pack(remote_endpoint_pair_, header_data);
-                    co_await write_tuntap_tcp_packet(tcp_pack);
-                }
+                flags.flag.fin = true;
+                co_await write_packet(flags);
+
                 state_ = tcp_state::ts_close_wait;
                 co_return;
             }
@@ -224,40 +212,16 @@ public:
 
                 tcp_packet::tcp_flags flags;
                 flags.flag.ack = true;
-
                 co_await write_packet(flags);
 
                 boost::system::error_code ec;
                 co_await boost::asio::async_write(socket_, packet.payload(), net_awaitable[ec]);
                 co_return;
             }
-            if (read_buffer_.size() != 0 && ack_num == server_seq_num_ + read_buffer_.size()) {
-                server_seq_num_ += read_buffer_.size();
-                read_buffer_.consume(read_buffer_.size());
+            if (server_seq_num_ != next_client_ack_num_) {
+                server_seq_num_ = next_client_ack_num_;
                 boost::asio::co_spawn(socket_.get_executor(), start_read(), boost::asio::detached);
             }
-            /*boost::system::error_code ec;
-            co_await boost::asio::async_write(socket_, packet.payload(), net_awaitable[ec]);
-            if (ec) {
-                这里应该关闭
-            }
-            }
-
-            /*c_seq_num_ += packet.payload().size();
-
-            tcp_packet::header header_data;
-            header_data.seq_num = seq_num_;
-            header_data.ack_num = c_seq_num_;
-            header_data.flags.flag.ack = true;
-
-            tcp_packet tcp_pack(remote_endpoint_pair_, header_data);
-            co_await write_tuntap_tcp_packet(tcp_pack);*/
-
-            /*boost::system::error_code ec;
-            co_await boost::asio::async_write(socket_, packet.payload(), net_awaitable[ec]);
-            if (ec) {
-                这里应该关闭
-            }*/
 
         } break;
         case transport_layer::tcp_stream::tcp_state::ts_fin_wait_1:
@@ -271,7 +235,7 @@ public:
             }
             auto ack_num = packet.header_data().ack_num;
 
-            if (ack_num != server_seq_num_ + 1) {
+            if (ack_num != next_client_ack_num_) {
                 co_return;
             }
             state_ = tcp_state::ts_closed;
@@ -312,9 +276,14 @@ public:
 
     boost::asio::awaitable<void> start_read()
     {
-        boost::system::error_code ec;
-        auto bytes = co_await socket_.async_read_some(read_buffer_.prepare(1024),
+        if (client_window_size_ == 0)
+            co_return;
 
+        boost::system::error_code ec;
+        boost::asio::streambuf read_buffer;
+        auto bytes = co_await socket_.async_read_some(read_buffer.prepare(
+                                                          std::max<uint16_t>(0x0FFF,
+                                                                             client_window_size_)),
                                                       net_awaitable[ec]);
         if (state_ != tcp_state::ts_established) {
             co_return;
@@ -323,7 +292,7 @@ public:
         if (ec) {
             co_return;
         }
-        read_buffer_.commit(bytes);
+        read_buffer.commit(bytes);
 
         next_server_ack_num_ += bytes;
 
@@ -331,7 +300,7 @@ public:
         flags.flag.ack = true;
         flags.flag.psh = true;
 
-        co_await write_packet(flags, read_buffer_.data());
+        co_await write_packet(flags, read_buffer.data());
     }
 
 private:
@@ -346,13 +315,13 @@ private:
 private:
     tuntap::tuntap &tuntap_;
     boost::asio::ip::tcp::socket socket_;
-    boost::asio::streambuf read_buffer_;
 
     transport_layer::tcp_endpoint_pair local_endpoint_pair_;
     transport_layer::tcp_endpoint_pair remote_endpoint_pair_;
 
     uint32_t next_server_ack_num_ = 0; //服务器下一次找客户端需要发送的序列号
     uint32_t next_client_ack_num_ = 0; //客户端下一次找服务器需要发送的序列号
+    uint16_t client_window_size_ = 0xFFFF;
 
     uint32_t server_seq_num_ = 0;
 

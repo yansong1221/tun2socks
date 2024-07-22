@@ -24,7 +24,7 @@ struct alignas(4) tcp_header
 class tcp_packet
 {
 public:
-    constexpr static uint8_t protocol_type = 0x06;
+    constexpr static uint8_t protocol = 0x06;
 
     union tcp_flags {
         struct unamed_struct
@@ -46,6 +46,7 @@ public:
         uint32_t seq_num = 0;
         uint32_t ack_num = 0;
         tcp_flags flags;
+        uint16_t window_size = 0xFFFF;
     };
 
 public:
@@ -78,7 +79,7 @@ public:
         header->ack_num = ::htonl(header_data_.ack_num);
         header->data_offset = sizeof(details::tcp_header) / 4;
         header->flags = header_data_.flags.data;
-        header->window_size = 0xFFFF;
+        header->window_size = htons(header_data_.window_size);
         header->checksum = checksum(header,
                                     endpoint_pair_.to_address_pair(),
                                     boost::asio::const_buffer((const uint8_t *) payload_.data(),
@@ -137,6 +138,7 @@ public:
         tcp_packet::header header_data;
         header_data.seq_num = ntohl(header->seq_num);
         header_data.ack_num = ntohl(header->ack_num);
+        header_data.window_size = ntohs(header->window_size);
         header_data.flags.data = header->flags;
 
         return std::make_unique<tcp_packet>(endpoint_pair, header_data, buffer);

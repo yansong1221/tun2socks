@@ -19,7 +19,7 @@ struct alignas(4) udp_header
 class udp_packet
 {
 public:
-    constexpr static uint8_t protocol_type = 0x11;
+    constexpr static uint8_t protocol = 0x11;
 
 public:
     udp_packet(const udp_endpoint_pair &endpoint_pair, const boost::asio::const_buffer &payload)

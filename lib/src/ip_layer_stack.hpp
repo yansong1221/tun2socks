@@ -22,7 +22,7 @@ public:
             co_return;
 
         switch (ip_pack->next_protocol()) {
-        case transport_layer::udp_packet::protocol_type: {
+        case transport_layer::udp_packet::protocol: {
             auto udp_pack = transport_layer::udp_packet::from_ip_packet(*ip_pack);
             if (!udp_pack)
                 break;
