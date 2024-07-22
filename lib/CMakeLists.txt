@@ -16,6 +16,7 @@ ${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/tun2socks.h
 )
 
 SET(SRC_FILES
+${CMAKE_CURRENT_SOURCE_DIR}/src/udp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/address_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/endpoint_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/checksum.hpp
@@ -23,7 +24,7 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/ip_packet.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_packet.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_packet.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_stream.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/ip_layer_stack.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/basic_tuntap.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp

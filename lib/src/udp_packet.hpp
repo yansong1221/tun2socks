@@ -1,7 +1,7 @@
 #pragma once
 #include "checksum.hpp"
+#include "endpoint_pair.hpp"
 #include "ip_packet.hpp"
-
 #include <boost/asio.hpp>
 namespace transport_layer {
 
@@ -32,7 +32,7 @@ public:
     template<typename Allocator>
     void make_packet(boost::asio::basic_streambuf<Allocator> &buffers)
     {
-        uint16_t length = sizeof(details::udp_header) + payload_.size();
+        uint16_t length = sizeof(details::udp_header) + (uint16_t) payload_.size();
 
         auto buf = buffers.prepare(length);
         memset(buf.data(), 0, length);
@@ -47,9 +47,21 @@ public:
         buffers.commit(length);
     }
 
+    template<typename Allocator>
+    void make_ip_packet(boost::asio::basic_streambuf<Allocator> &buffers)
+    {
+        boost::asio::streambuf payload;
+        make_packet(payload);
+
+        network_layer::ip_packet ip_pack(endpoint_pair_.to_address_pair(),
+                                         udp_packet::protocol,
+                                         payload.data());
+        ip_pack.make_packet(buffers);
+    }
+
     inline static std::unique_ptr<udp_packet> from_ip_packet(const network_layer::ip_packet &ip_pack)
     {
-        if (ip_pack.next_protocol() != udp_packet::protocol_type)
+        if (ip_pack.next_protocol() != udp_packet::protocol)
             return nullptr;
 
         auto buffer = ip_pack.payload_data();
@@ -105,10 +117,13 @@ private:
             psh.src_addr = ::htonl(address_pair.src.to_v4().to_ulong());
             psh.dest_addr = ::htonl(address_pair.dest.to_v4().to_ulong());
             psh.reserved = 0;
-            psh.protocol = udp_packet::protocol_type;
-            psh.udp_length = htons(sizeof(details::udp_header) + payload.size());
+            psh.protocol = udp_packet::protocol;
+            psh.udp_length = htons(sizeof(details::udp_header) + (uint16_t) payload.size());
 
-            return checksum::checksum(udp, &psh, (const uint8_t *) payload.data(), payload.size());
+            return checksum::checksum(udp,
+                                      &psh,
+                                      (const uint8_t *) payload.data(),
+                                      (uint16_t) payload.size());
         }
 
         case 6: {
@@ -126,10 +141,13 @@ private:
                    address_pair.dest.to_v6().to_bytes().data(),
                    sizeof(psh.dest_addr));
             psh.zero = 0;
-            psh.protocol = udp_packet::protocol_type;
-            psh.length = htons(sizeof(details::udp_header) + payload.size());
+            psh.protocol = udp_packet::protocol;
+            psh.length = htons(sizeof(details::udp_header) + (uint16_t) payload.size());
 
-            return checksum::checksum(udp, &psh, (const uint8_t *) payload.data(), payload.size());
+            return checksum::checksum(udp,
+                                      &psh,
+                                      (const uint8_t *) payload.data(),
+                                      (uint16_t) payload.size());
         }
         default:
             break;

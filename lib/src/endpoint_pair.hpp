@@ -1,4 +1,4 @@
-#pragma
+#pragma once
 #include "address_pair.hpp"
 #include <boost/asio.hpp>
 #include <boost/container_hash/hash.hpp>

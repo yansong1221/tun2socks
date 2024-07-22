@@ -81,7 +81,7 @@ public:
             constexpr uint8_t ihl = header_len / 4;
             static std::atomic_uint16_t index = 0;
 
-            uint16_t tot_len = header_len + payload_data_.size();
+            uint16_t tot_len = header_len + (uint16_t) payload_data_.size();
 
             auto buf = buffer.prepare(tot_len);
             memset(buf.data(), 0, tot_len);
@@ -106,7 +106,7 @@ public:
         case 6: {
             constexpr auto header_len = sizeof(details::ipv6_header);
 
-            auto payload_len = boost::asio::buffer_size(payload_data_);
+            auto payload_len = (uint16_t) payload_data_.size();
             auto src_addr_bytes = address_pair_.src.to_v6().to_bytes();
             auto dst_addr_bytes = address_pair_.dest.to_v6().to_bytes();
 

@@ -65,10 +65,10 @@
 
 namespace transport_layer {
 
-class tcp_stream
+class tcp_proxy
 {
 public:
-    using ptr = std::shared_ptr<tcp_stream>;
+    using ptr = std::shared_ptr<tcp_proxy>;
 
     enum class tcp_state {
         ts_invalid = -1,
@@ -86,9 +86,12 @@ public:
     };
 
 public:
-    tcp_stream(tuntap::tuntap &tuntap, const transport_layer::tcp_endpoint_pair &endpoint_pair)
-        : tuntap_(tuntap)
-        , socket_(tuntap.get_executor())
+    tcp_proxy(boost::asio::io_context &ioc,
+               tuntap::tuntap &tuntap,
+               const transport_layer::tcp_endpoint_pair &endpoint_pair)
+        : ioc_(ioc)
+        , tuntap_(tuntap)
+        , socket_(ioc)
         , state_(tcp_state::ts_listen)
         , local_endpoint_pair_(endpoint_pair)
         , remote_endpoint_pair_(endpoint_pair.swap())
@@ -208,7 +211,7 @@ public:
 
             //接收数据
             if (flags.flag.psh) {
-                next_server_ack_num_ += packet.payload().size();
+                next_server_ack_num_ += (uint32_t) packet.payload().size();
 
                 tcp_packet::tcp_flags flags;
                 flags.flag.ack = true;
@@ -224,9 +227,9 @@ public:
             }
 
         } break;
-        case transport_layer::tcp_stream::tcp_state::ts_fin_wait_1:
+        case transport_layer::tcp_proxy::tcp_state::ts_fin_wait_1:
             break;
-        case transport_layer::tcp_stream::tcp_state::ts_fin_wait_2:
+        case transport_layer::tcp_proxy::tcp_state::ts_fin_wait_2:
             break;
         case tcp_state::ts_close_wait: {
             auto flags = packet.header_data().flags;
@@ -242,11 +245,11 @@ public:
             co_return;
 
         } break;
-        case transport_layer::tcp_stream::tcp_state::ts_closing:
+        case transport_layer::tcp_proxy::tcp_state::ts_closing:
             break;
-        case transport_layer::tcp_stream::tcp_state::ts_last_ack:
+        case transport_layer::tcp_proxy::tcp_state::ts_last_ack:
             break;
-        case transport_layer::tcp_stream::tcp_state::ts_time_wait:
+        case transport_layer::tcp_proxy::tcp_state::ts_time_wait:
             break;
         default:
             break;
@@ -294,7 +297,7 @@ public:
         }
         read_buffer.commit(bytes);
 
-        next_server_ack_num_ += bytes;
+        next_server_ack_num_ += (uint32_t) bytes;
 
         tcp_packet::tcp_flags flags;
         flags.flag.ack = true;
@@ -313,6 +316,7 @@ private:
     }
 
 private:
+    boost::asio::io_context &ioc_;
     tuntap::tuntap &tuntap_;
     boost::asio::ip::tcp::socket socket_;
 

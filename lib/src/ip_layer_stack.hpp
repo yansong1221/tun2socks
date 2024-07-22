@@ -1,15 +1,17 @@
 #pragma once
 #include "ip_packet.hpp"
 #include "tcp_packet.hpp"
-#include "tcp_stream.hpp"
+#include "tcp_proxy.hpp"
 #include "tuntap.hpp"
 #include "udp_packet.hpp"
+#include "udp_proxy.hpp"
 
 class ip_layer_stack
 {
 public:
-    explicit ip_layer_stack(tuntap::tuntap &_tuntap)
-        : tuntap_(_tuntap)
+    explicit ip_layer_stack(boost::asio::io_context &ioc, tuntap::tuntap &_tuntap)
+        : ioc_(ioc)
+        , tuntap_(_tuntap)
     {}
     void start()
     {
@@ -27,23 +29,29 @@ public:
             if (!udp_pack)
                 break;
 
+            auto endpoint_pair = udp_pack->endpoint_pair();
+            auto proxy = udp_proxy_map_[endpoint_pair];
+            if (!proxy) {
+                proxy = std::make_shared<udp_proxy>(ioc_, tuntap_, endpoint_pair);
+                udp_proxy_map_[endpoint_pair] = proxy;
+            }
+            co_await proxy->on_udp_packet(*udp_pack);
         } break;
-        case transport_layer::tcp_packet::protocol_type: {
+        case transport_layer::tcp_packet::protocol: {
             auto tcp_pack = transport_layer::tcp_packet::from_ip_packet(*ip_pack);
             if (!tcp_pack)
                 break;
 
             auto endpoint_pair = tcp_pack->endpoint_pair();
 
-            transport_layer::tcp_stream::ptr tcp_stream = tcp_stream_map_[endpoint_pair];
-            if (!tcp_stream) {
-                tcp_stream = std::make_shared<transport_layer::tcp_stream>(tuntap_,
-                                                                           tcp_pack->endpoint_pair());
-                tcp_stream_map_[endpoint_pair] = tcp_stream;
+            auto proxy = tcp_proxy_map_[endpoint_pair];
+            if (!proxy) {
+                proxy = std::make_shared<transport_layer::tcp_proxy>(ioc_, tuntap_, endpoint_pair);
+                tcp_proxy_map_[endpoint_pair] = proxy;
             }
-            co_await tcp_stream->on_tcp_packet(*tcp_pack);
-            if (tcp_stream->closed())
-                tcp_stream_map_.erase(endpoint_pair);
+            co_await proxy->on_tcp_packet(*tcp_pack);
+            if (proxy->closed())
+                tcp_proxy_map_.erase(endpoint_pair);
 
         } break;
         default:
@@ -68,7 +76,10 @@ public:
     };
 
 private:
+    boost::asio::io_context &ioc_;
+
     tuntap::tuntap &tuntap_;
-    std::unordered_map<transport_layer::tcp_endpoint_pair, transport_layer::tcp_stream::ptr>
-        tcp_stream_map_;
+    std::unordered_map<transport_layer::tcp_endpoint_pair, transport_layer::tcp_proxy::ptr>
+        tcp_proxy_map_;
+    std::unordered_map<transport_layer::udp_endpoint_pair, udp_proxy::ptr> udp_proxy_map_;
 };

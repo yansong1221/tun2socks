@@ -67,7 +67,7 @@ public:
     template<typename Allocator>
     void make_packet(boost::asio::basic_streambuf<Allocator> &buffers) const
     {
-        uint16_t length = sizeof(details::tcp_header) + payload_.size();
+        uint16_t length = sizeof(details::tcp_header) + (uint16_t) payload_.size();
 
         auto buf = buffers.prepare(length);
         memset(buf.data(), 0, length);
@@ -94,7 +94,7 @@ public:
         make_packet(payload);
 
         network_layer::ip_packet ip_pack(endpoint_pair_.to_address_pair(),
-                                         tcp_packet::protocol_type,
+                                         tcp_packet::protocol,
                                          payload.data());
         ip_pack.make_packet(buffers);
     }
@@ -162,10 +162,13 @@ private:
             } psh{0};
             psh.src_addr = ::htonl(address_pair.src.to_v4().to_ulong());
             psh.dest_addr = ::htonl(address_pair.dest.to_v4().to_ulong());
-            psh.protocol = tcp_packet::protocol_type;
-            psh.tcp_length = htons(sizeof(details::tcp_header) + payload.size());
+            psh.protocol = tcp_packet::protocol;
+            psh.tcp_length = htons(sizeof(details::tcp_header) + (uint16_t) payload.size());
 
-            return checksum::checksum(tcp, &psh, (const uint8_t *) payload.data(), payload.size());
+            return checksum::checksum(tcp,
+                                      &psh,
+                                      (const uint8_t *) payload.data(),
+                                      (uint16_t) payload.size());
         }
 
         case 6: {
@@ -182,10 +185,13 @@ private:
             memcpy(psh.dest_addr,
                    address_pair.dest.to_v6().to_bytes().data(),
                    sizeof(psh.dest_addr));
-            psh.protocol = tcp_packet::protocol_type;
-            psh.length = htons(sizeof(details::tcp_header) + payload.size());
+            psh.protocol = tcp_packet::protocol;
+            psh.length = htons(sizeof(details::tcp_header) + (uint16_t) payload.size());
 
-            return checksum::checksum(tcp, &psh, (const uint8_t *) payload.data(), payload.size());
+            return checksum::checksum(tcp,
+                                      &psh,
+                                      (const uint8_t *) payload.data(),
+                                      (uint16_t) payload.size());
         }
         default:
             break;
