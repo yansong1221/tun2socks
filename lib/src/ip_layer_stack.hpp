@@ -24,36 +24,12 @@ public:
             co_return;
 
         switch (ip_pack->next_protocol()) {
-        case transport_layer::udp_packet::protocol: {
-            auto udp_pack = transport_layer::udp_packet::from_ip_packet(*ip_pack);
-            if (!udp_pack)
-                break;
-
-            auto endpoint_pair = udp_pack->endpoint_pair();
-            auto proxy = udp_proxy_map_[endpoint_pair];
-            if (!proxy) {
-                proxy = std::make_shared<udp_proxy>(ioc_, tuntap_, endpoint_pair);
-                udp_proxy_map_[endpoint_pair] = proxy;
-            }
-            co_await proxy->on_udp_packet(*udp_pack);
-        } break;
-        case transport_layer::tcp_packet::protocol: {
-            auto tcp_pack = transport_layer::tcp_packet::from_ip_packet(*ip_pack);
-            if (!tcp_pack)
-                break;
-
-            auto endpoint_pair = tcp_pack->endpoint_pair();
-
-            auto proxy = tcp_proxy_map_[endpoint_pair];
-            if (!proxy) {
-                proxy = std::make_shared<transport_layer::tcp_proxy>(ioc_, tuntap_, endpoint_pair);
-                tcp_proxy_map_[endpoint_pair] = proxy;
-            }
-            co_await proxy->on_tcp_packet(*tcp_pack);
-            if (proxy->closed())
-                tcp_proxy_map_.erase(endpoint_pair);
-
-        } break;
+        case transport_layer::udp_packet::protocol:
+            co_await on_udp_packet(*ip_pack);
+            break;
+        case transport_layer::tcp_packet::protocol:
+            co_await on_tcp_packet(*ip_pack);
+            break;
         default:
             break;
         }
@@ -74,6 +50,39 @@ public:
                                   boost::asio::detached);
         }
     };
+
+private:
+    boost::asio::awaitable<void> on_udp_packet(const network_layer::ip_packet &ip_pack)
+    {
+        auto udp_pack = transport_layer::udp_packet::from_ip_packet(ip_pack);
+        if (!udp_pack)
+            co_return;
+
+        auto endpoint_pair = udp_pack->endpoint_pair();
+        auto proxy = udp_proxy_map_[endpoint_pair];
+        if (!proxy) {
+            proxy = std::make_shared<udp_proxy>(ioc_, tuntap_, endpoint_pair);
+            udp_proxy_map_[endpoint_pair] = proxy;
+        }
+        co_await proxy->on_udp_packet(*udp_pack);
+    }
+    boost::asio::awaitable<void> on_tcp_packet(const network_layer::ip_packet &ip_pack)
+    {
+        auto tcp_pack = transport_layer::tcp_packet::from_ip_packet(ip_pack);
+        if (!tcp_pack)
+            co_return;
+
+        auto endpoint_pair = tcp_pack->endpoint_pair();
+
+        auto proxy = tcp_proxy_map_[endpoint_pair];
+        if (!proxy) {
+            proxy = std::make_shared<transport_layer::tcp_proxy>(ioc_, tuntap_, endpoint_pair);
+            tcp_proxy_map_[endpoint_pair] = proxy;
+        }
+        co_await proxy->on_tcp_packet(*tcp_pack);
+        if (proxy->closed())
+            tcp_proxy_map_.erase(endpoint_pair);
+    }
 
 private:
     boost::asio::io_context &ioc_;
