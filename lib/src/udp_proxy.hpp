@@ -7,11 +7,14 @@ class udp_proxy : public std::enable_shared_from_this<udp_proxy>
 {
 public:
     using ptr = std::shared_ptr<udp_proxy>;
+    using close_function = std::function<void(const transport_layer::udp_endpoint_pair &)>;
 
     explicit udp_proxy(boost::asio::io_context &ioc,
                        tuntap::tuntap &tuntap,
-                       const transport_layer::udp_endpoint_pair &endpoint_pair)
+                       const transport_layer::udp_endpoint_pair &endpoint_pair,
+                       const close_function &function)
         : ioc_(ioc)
+        , close_function_(function)
         , tuntap_(tuntap)
         , socket_(ioc)
         , udp_timeout_timer_(ioc)
@@ -79,6 +82,7 @@ private:
     boost::asio::io_context &ioc_;
     tuntap::tuntap &tuntap_;
     boost::asio::ip::udp::socket socket_;
+    close_function close_function_;
 
     std::chrono::seconds udp_timeout_seconds_ = std::chrono::seconds(60);
     boost::asio::steady_timer udp_timeout_timer_;
