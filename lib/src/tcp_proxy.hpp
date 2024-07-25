@@ -63,6 +63,7 @@
 #include "tuntap.hpp"
 #include <spdlog/spdlog.h>
 
+#include "adapters.hpp"
 #include "local_port_pid.hpp"
 
 namespace transport_layer {
@@ -106,6 +107,10 @@ public:
     {
         auto pid = local_port_pid::tcp_using_port(local_endpoint_pair_.src.port());
         local_port_pid::PrintProcessInfo(pid);
+        auto adapter_info = adapters::adapter_info::get_adapters();
+
+        for (const auto &info : adapter_info)
+            SPDLOG_INFO("{0}", info.to_string());
     }
     ~tcp_proxy() { SPDLOG_INFO("断开连接: {0}", local_endpoint_pair_.to_string()); }
 
@@ -135,7 +140,7 @@ public:
             if (local_endpoint_pair_.to_address_pair().ip_version() == 4) {
                 socket_.open(boost::asio::ip::tcp::v4());
                 socket_.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::from_string(
-                                                                "192.168.101.16"),
+                                                                "192.168.31.152"),
                                                             0),
                              ec);
             }
@@ -143,7 +148,7 @@ public:
             else {
                 socket_.open(boost::asio::ip::tcp::v6());
                 socket_.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v6::from_string(
-                                                                "fe80::613b:3e3f:71e9:7e00%5"),
+                                                                "fe80::bab1:8f1d:f035:de5b%11"),
                                                             0),
                              ec);
             }
@@ -153,7 +158,8 @@ public:
 
                 tcp_packet::tcp_flags flags;
                 flags.flag.rst = true;
-                write_packet(flags);
+                flags.flag.ack = true;
+                write_packet(flags, server_seq_num_, seq_num + 1);
 
                 do_close();
                 co_return;
@@ -167,7 +173,8 @@ public:
 
                 tcp_packet::tcp_flags flags;
                 flags.flag.rst = true;
-                write_packet(flags);
+                flags.flag.ack = true;
+                write_packet(flags, server_seq_num_, seq_num + 1);
 
                 do_close();
                 co_return;
@@ -240,10 +247,28 @@ public:
 
             write_client_data_to_proxy(packet.payload());
         } break;
-        case tcp_state::ts_fin_wait_1:
-            break;
-        case tcp_state::ts_fin_wait_2:
-            break;
+        case tcp_state::ts_fin_wait_1: {
+            if (!flags.flag.ack)
+                co_return;
+            if (ack_num != server_seq_num_ + 1) {
+                co_return;
+            }
+            state_ = tcp_state::ts_fin_wait_2;
+
+        } break;
+        case tcp_state::ts_fin_wait_2: {
+            if (!flags.flag.ack)
+                co_return;
+            if (!flags.flag.fin)
+                co_return;
+            if (ack_num != server_seq_num_ + 1) {
+                co_return;
+            }
+            tcp_packet::tcp_flags flags;
+            flags.flag.ack = true;
+            write_packet(flags, server_seq_num_, seq_num + 1);
+            do_close();
+        } break;
         case tcp_state::ts_close_wait:
             break;
         case tcp_state::ts_closing:
@@ -256,7 +281,6 @@ public:
                 co_return;
             }
             do_close();
-            co_return;
         } break;
         case tcp_state::ts_time_wait:
             break;
@@ -311,11 +335,6 @@ private:
                                               net_awaitable[ec]);
             if (ec) {
                 switch (state_) {
-                    //客户端主动关闭
-                case tcp_state::ts_last_ack:
-                case tcp_state::ts_close_wait:
-                case tcp_state::ts_closed: {
-                } break;
                     //代理远程主动关闭
                 case tcp_state::ts_established: {
                     state_ = tcp_state::ts_fin_wait_1;
@@ -369,7 +388,6 @@ private:
                 //客户端主动关闭
                 case tcp_state::ts_established: {
                     state_ = tcp_state::ts_fin_wait_1;
-
                     tcp_packet::tcp_flags flags;
                     flags.flag.fin = true;
                     write_packet(flags, read_buffer_.data());
@@ -386,6 +404,11 @@ private:
     }
     void write_client_data_to_proxy(const boost::asio::const_buffer &buffer)
     {
+        if (state_ != tcp_state::ts_established) {
+            SPDLOG_ERROR("连接已经断开怎么还在发数据....");
+            return;
+        }
+
         if (buffer.size() == 0)
             return;
 

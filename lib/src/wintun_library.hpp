@@ -32,6 +32,7 @@
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
 
+#include "misc.hpp"
 #include <filesystem>
 #include <spdlog/spdlog.h>
 
@@ -40,27 +41,6 @@
 namespace wintun {
 
 namespace details {
-inline void utf8_utf16(const std::string &utf8, std::wstring &utf16)
-{
-    auto len = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, NULL, 0);
-    if (len > 0) {
-        wchar_t *tmp = (wchar_t *) malloc(sizeof(wchar_t) * len);
-        MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, tmp, len);
-        utf16.assign(tmp);
-        free(tmp);
-    }
-}
-
-inline void utf16_utf8(const std::wstring &utf16, std::string &utf8)
-{
-    auto len = WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), -1, NULL, 0, 0, 0);
-    if (len > 0) {
-        char *tmp = (char *) malloc(sizeof(char) * len);
-        WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), -1, tmp, len, 0, 0);
-        utf8.assign(tmp);
-        free(tmp);
-    }
-}
 
 inline static void log_throw_system_error(std::string_view prefix, DWORD ErrorCode)
 {
@@ -145,11 +125,11 @@ public:
     inline std::shared_ptr<adapter> create_adapter(const std::string &_name,
                                                    const std::string &_tunnel_type)
     {
-        std::wstring utf16_name;
-        std::wstring utf16_tunnel_type;
+        std::wstring utf16_name = misc::utf8_utf16(_name);
+        std::wstring utf16_tunnel_type = misc::utf8_utf16(_tunnel_type);
 
-        details::utf8_utf16(_name, utf16_name);
-        details::utf8_utf16(_tunnel_type, utf16_tunnel_type);
+        /*details::utf8_utf16(_name, utf16_name);
+        details::utf8_utf16(_tunnel_type, utf16_tunnel_type);*/
 
         GUID ExampleGuid = {0xdeadbabf,
                             0xcafe,
@@ -319,7 +299,7 @@ public:
     template<typename ConstBufferSequence>
     inline void send_packets(const ConstBufferSequence &buffer)
     {
-        DWORD send_size = (DWORD) boost::asio::buffer_size(buffer); 
+        DWORD send_size = (DWORD) boost::asio::buffer_size(buffer);
         if (send_size == 0)
             return;
 
