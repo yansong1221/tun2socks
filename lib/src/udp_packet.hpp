@@ -30,7 +30,7 @@ public:
     inline boost::asio::const_buffer payload() const { return payload_; }
 
     template<typename Allocator>
-    void make_packet(boost::asio::basic_streambuf<Allocator> &buffers)
+    void make_packet(boost::asio::basic_streambuf<Allocator> &buffers) const
     {
         uint16_t length = sizeof(details::udp_header) + (uint16_t) payload_.size();
 
@@ -66,7 +66,7 @@ public:
 
         auto buffer = ip_pack.payload_data();
         if (buffer.size() < sizeof(details::udp_header)) {
-            SPDLOG_INFO("Received packet without room for an upd header");
+            SPDLOG_WARN("Received packet without room for an upd header");
             return nullptr;
         }
 
@@ -90,9 +90,9 @@ public:
                                      ::ntohs(header->src_port),
                                      ::ntohs(header->dest_port));
 
-        SPDLOG_INFO("Received IPv{0} udp packet {1}",
-                    ip_pack.address_pair().ip_version(),
-                    point_pair.to_string());
+        SPDLOG_DEBUG("Received IPv{0} udp packet {1}",
+                     ip_pack.address_pair().ip_version(),
+                     point_pair.to_string());
 
         return std::make_unique<udp_packet>(point_pair,
                                             boost::asio::const_buffer(header + 1, payload_len));

@@ -104,7 +104,7 @@ public:
         auto buffer = ip_pack.payload_data();
 
         if (buffer.size() < sizeof(details::tcp_header)) {
-            SPDLOG_INFO("Received packet without room for a tcp header");
+            SPDLOG_WARN("Received packet without room for a tcp header");
             return nullptr;
         }
 
@@ -129,9 +129,9 @@ public:
                                         ::ntohs(header->src_port),
                                         ::ntohs(header->dest_port));
 
-        SPDLOG_INFO("Received IPv{0} TCP Packet {1}",
-                    ip_pack.address_pair().ip_version(),
-                    endpoint_pair.to_string());
+        SPDLOG_DEBUG("Received IPv{0} TCP Packet {1}",
+                     ip_pack.address_pair().ip_version(),
+                     endpoint_pair.to_string());
 
         buffer += header_len;
 

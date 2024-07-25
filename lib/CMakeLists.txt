@@ -16,6 +16,7 @@ ${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/tun2socks.h
 )
 
 SET(SRC_FILES
+${CMAKE_CURRENT_SOURCE_DIR}/src/local_port_pid.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/address_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/endpoint_pair.hpp
