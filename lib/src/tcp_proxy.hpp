@@ -63,8 +63,8 @@
 #include "tuntap.hpp"
 #include <spdlog/spdlog.h>
 
-#include "adapters.hpp"
 #include "local_port_pid.hpp"
+#include "socks_client/socks_client.hpp"
 
 namespace transport_layer {
 
@@ -107,10 +107,6 @@ public:
     {
         auto pid = local_port_pid::tcp_using_port(local_endpoint_pair_.src.port());
         local_port_pid::PrintProcessInfo(pid);
-        auto adapter_info = adapters::adapter_info::get_adapters();
-
-        for (const auto &info : adapter_info)
-            SPDLOG_INFO("{0}", info.to_string());
     }
     ~tcp_proxy() { SPDLOG_INFO("断开连接: {0}", local_endpoint_pair_.to_string()); }
 
@@ -137,21 +133,12 @@ public:
 
             //这里应该要试试连接远程
             boost::system::error_code ec;
-            if (local_endpoint_pair_.to_address_pair().ip_version() == 4) {
-                socket_.open(boost::asio::ip::tcp::v4());
-                socket_.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::from_string(
-                                                                "192.168.31.152"),
-                                                            0),
-                             ec);
-            }
 
-            else {
-                socket_.open(boost::asio::ip::tcp::v6());
-                socket_.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v6::from_string(
-                                                                "fe80::bab1:8f1d:f035:de5b%11"),
-                                                            0),
-                             ec);
-            }
+            socket_.open(boost::asio::ip::tcp::v4());
+            socket_.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::from_string(
+                                                            "192.168.31.152"),
+                                                        0),
+                         ec);
 
             if (ec) {
                 SPDLOG_INFO("bind {0}", ec.message());
@@ -179,6 +166,23 @@ public:
                 do_close();
                 co_return;
             }
+            proxy::socks_client_option op;
+            op.target_host = local_endpoint_pair_.dest.address().to_string();
+            op.target_port = local_endpoint_pair_.dest.port();
+            op.proxy_hostname = false;
+
+            boost::asio::ip::tcp::endpoint remote_endp;
+            co_await proxy::async_socks_handshake(socket_, op, remote_endp, ec);
+            if (ec) {
+                tcp_packet::tcp_flags flags;
+                flags.flag.rst = true;
+                flags.flag.ack = true;
+                write_packet(flags, server_seq_num_, seq_num + 1);
+
+                do_close();
+                co_return;
+            }
+
             state_ = tcp_state::ts_syn_rcvd;
             client_window_size_ = window_size;
             client_seq_num_ = seq_num;

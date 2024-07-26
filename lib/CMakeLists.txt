@@ -16,9 +16,17 @@ ${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/tun2socks.h
 )
 
 SET(SRC_FILES
+
+${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_client.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_enums.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_error_code.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_io.hpp
+
+
+${CMAKE_CURRENT_SOURCE_DIR}/src/route/route.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/basic_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/misc.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/platform.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/adapters.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/local_port_pid.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/address_pair.hpp
@@ -44,6 +52,7 @@ elseif(MSVC)
 	list(APPEND SRC_FILES 
 		${CMAKE_CURRENT_SOURCE_DIR}/src/wintun_service.hpp
 		${CMAKE_CURRENT_SOURCE_DIR}/src/wintun_library.hpp
+		${CMAKE_CURRENT_SOURCE_DIR}/src/route/route_win32.hpp
 	)
 endif()
 
@@ -57,6 +66,8 @@ ${SRC_FILES}
 target_include_directories(${MODULE}
 	PUBLIC
 	${CMAKE_CURRENT_SOURCE_DIR}/include/
+	PRIVATE
+	${CMAKE_CURRENT_SOURCE_DIR}/src/
 )
 
 target_link_libraries(${MODULE} 
