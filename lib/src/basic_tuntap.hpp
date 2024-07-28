@@ -29,6 +29,11 @@ public:
     {
         return device_.async_write_some(buffers, handler);
     }
+    template<typename ConstBufferSequence>
+    void write(const ConstBufferSequence &buffers, boost::system::error_code &ec)
+    {
+        device_.write(buffers, ec);
+    }
 
 private:
     boost::asio::io_context &ioc_;
