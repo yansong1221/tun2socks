@@ -17,13 +17,14 @@ struct route_ipv4
 
 struct route_ipv6
 {
-    boost::asio::ip::address_v4 network;
-    boost::asio::ip::address_v4 netmask;
-    boost::asio::ip::address_v4 if_addr;
+    boost::asio::ip::address_v6 dest;
+    int prefix_length;
+    boost::asio::ip::address_v6 if_addr;
     uint32_t metric;
 };
 
 inline std::optional<route_ipv4> get_default_ipv4_route();
+inline std::optional<route_ipv6> get_default_ipv6_route();
 
 } // namespace route
 

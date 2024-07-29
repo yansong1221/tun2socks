@@ -129,6 +129,83 @@ inline std::optional<route_ipv4> get_default_ipv4_route()
     return std::nullopt;
 }
 
+static const MIB_IPFORWARD_ROW2 *get_default_gateway_row(const MIB_IPFORWARD_TABLE2 *pIpForwardTable)
+{
+    DWORD lowest_metric = MAXDWORD;
+    const MIB_IPFORWARD_ROW2 *ret = NULL;
+    int best = -1;
+
+    if (pIpForwardTable) {
+        for (DWORD i = 0; i < pIpForwardTable->NumEntries; ++i) {
+            const MIB_IPFORWARD_ROW2 &row = pIpForwardTable->Table[i];
+
+            boost::asio::ip::address_v6::bytes_type ip_bytes;
+            memcpy(ip_bytes.data(), row.DestinationPrefix.Prefix.Ipv6.sin6_addr.u.Byte, 16);
+
+            auto net = boost::asio::ip::address_v6(ip_bytes);
+            auto prefix_length = row.DestinationPrefix.PrefixLength;
+
+            auto index = row.InterfaceIndex;
+            auto metric = row.Metric;
+
+            if (!net && !mask && metric < lowest_metric) {
+                ret = &row;
+                lowest_metric = metric;
+                best = i;
+            }
+        }
+    }
+    return ret;
+}
+
+inline std::optional<route_ipv6> get_default_ipv6_route()
+{
+    ULONG dwSize = 0;
+    DWORD status;
+
+    PMIB_IPFORWARD_TABLE2 pIpForwardTable = nullptr;
+
+    DWORD dwRetVal = GetIpForwardTable2(AF_INET6, &pIpForwardTable);
+    if (dwRetVal != NO_ERROR)
+        return std::nullopt;
+
+    for (ULONG i = 0; i < pIpForwardTable->NumEntries; i++) {
+        const MIB_IPFORWARD_ROW2 &row = pIpForwardTable->Table[i];
+
+        std::cout << "Destination: ";
+        PrintIPv6Address(row.DestinationPrefix.Prefix);
+
+        std::cout << "/" << (int) row.DestinationPrefix.PrefixLength;
+        std::cout << " Next Hop: ";
+        PrintIPv6Address(row.NextHop);
+
+        std::cout << " Interface Index: " << row.InterfaceIndex << std::endl;
+    }
+
+    std::vector<BYTE> buffer(dwSize);
+    PMIB_IPFORWARDTABLE pTable = reinterpret_cast<PMIB_IPFORWARDTABLE>(buffer.data());
+
+    status = GetIpForwardTable(pTable, &dwSize, TRUE);
+    if (status != NO_ERROR)
+        return std::nullopt;
+
+    const MIB_IPFORWARDROW *row = get_default_gateway_row(pTable);
+    if (row == nullptr)
+        return std::nullopt;
+
+    for (const auto &adapter : get_adapters()) {
+        if (adapter.ipv4_if_index == row->dwForwardIfIndex) {
+            route_ipv4 info;
+            info.network = boost::asio::ip::address_v4(::ntohl(row->dwForwardDest));
+            info.netmask = boost::asio::ip::address_v4(::ntohl(row->dwForwardMask));
+            info.if_addr = adapter.unicast_addr_v4;
+            info.metric = row->dwForwardMetric1;
+            return info;
+        }
+    }
+    return std::nullopt;
+}
+
 inline bool add_route_ipapi(const route_ipv4 &r)
 {
     bool ret = false;
