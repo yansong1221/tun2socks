@@ -62,6 +62,7 @@
 #include "tcp_packet.hpp"
 #include <spdlog/spdlog.h>
 
+#include "interface.hpp"
 #include "local_port_pid.hpp"
 #include "socks_client/socks_client.hpp"
 #include <queue>
@@ -93,21 +94,15 @@ public:
 public:
     tcp_proxy(boost::asio::io_context &ioc,
               const transport_layer::tcp_endpoint_pair &endpoint_pair,
-              const close_function &func,
-              const write_packet_function &write_func)
+              interface::tun2socks &_tun2socks)
         : ioc_(ioc)
-        , socket_(ioc)
         , state_(tcp_state::ts_listen)
-        , close_function_(func)
-        , write_packet_function_(write_func)
+        , tun2socks_(_tun2socks)
         , local_endpoint_pair_(endpoint_pair)
         , remote_endpoint_pair_(endpoint_pair.swap())
     {
         tun_sending_buffer_ = std::make_unique<boost::asio::streambuf>();
         tun_wait_buffer_ = std::make_unique<boost::asio::streambuf>();
-
-        auto pid = local_port_pid::tcp_using_port(local_endpoint_pair_.src.port());
-        local_port_pid::PrintProcessInfo(pid);
     }
     ~tcp_proxy() { SPDLOG_INFO("断开连接: {0}", local_endpoint_pair_.to_string()); }
 
@@ -123,31 +118,10 @@ public:
         case tcp_state::ts_closed:
             break;
         case tcp_state::ts_listen: {
-            //这里说明已经在连接远程了
-            if (socket_.is_open())
-                co_return;
-
             if (!flags.flag.syn) {
                 do_close();
                 co_return;
             }
-
-            /*proxy::socks_client_option op;
-            op.target_host = local_endpoint_pair_.dest.address().to_string();
-            op.target_port = local_endpoint_pair_.dest.port();
-            op.proxy_hostname = false;
-
-            boost::asio::ip::tcp::endpoint remote_endp;
-            co_await proxy::async_socks_handshake(socket_, op, remote_endp, ec);
-            if (ec) {
-                tcp_packet::tcp_flags flags;
-                flags.flag.rst = true;
-                flags.flag.ack = true;
-                write_packet(flags, server_seq_num_, seq_num + 1);
-
-                do_close();
-                co_return;
-            }*/
 
             state_ = tcp_state::ts_syn_rcvd;
             client_window_size_ = window_size;
@@ -294,18 +268,18 @@ public:
         header_data.flags = flags;
 
         tcp_packet tcp_pack(remote_endpoint_pair_, header_data, payload);
-        write_packet_function_(tcp_pack);
+        tun2socks_.write_tun_packet(tcp_pack);
     }
 
 private:
     inline void do_close()
     {
-        if (socket_.is_open()) {
+        if (socket_ && socket_->is_open()) {
             boost::system::error_code ec;
-            socket_.close(ec);
+            socket_->close(ec);
         }
         state_ = tcp_state::ts_closed;
-        close_function_(local_endpoint_pair_);
+        tun2socks_.close_endpoint_pair(local_endpoint_pair_);
     }
     boost::asio::awaitable<void> start_proxy()
     {
@@ -313,15 +287,8 @@ private:
 
         boost::system::error_code ec;
 
-        socket_.open(boost::asio::ip::tcp::v4());
-        socket_.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::from_string(
-                                                        "192.168.31.152"),
-                                                    0),
-                     ec);
-
-        if (ec) {
-            SPDLOG_INFO("bind {0}", ec.message());
-
+        socket_ = co_await tun2socks_.create_proxy_socket(local_endpoint_pair_);
+        if (!socket_) {
             tcp_packet::tcp_flags flags;
             flags.flag.rst = true;
             flags.flag.ack = true;
@@ -331,37 +298,6 @@ private:
             co_return;
         }
 
-        co_await socket_.async_connect(local_endpoint_pair_.dest, net_awaitable[ec]);
-        if (ec) {
-            SPDLOG_WARN("can't conect tcp endpoint [{0}]:{1}",
-                        local_endpoint_pair_.dest.address().to_string(),
-                        local_endpoint_pair_.dest.port());
-
-            tcp_packet::tcp_flags flags;
-            flags.flag.rst = true;
-            flags.flag.ack = true;
-            write_packet(flags);
-
-            do_close();
-            co_return;
-        }
-        /*proxy::socks_client_option op;
-            op.target_host = local_endpoint_pair_.dest.address().to_string();
-            op.target_port = local_endpoint_pair_.dest.port();
-            op.proxy_hostname = false;
-
-            boost::asio::ip::tcp::endpoint remote_endp;
-            co_await proxy::async_socks_handshake(socket_, op, remote_endp, ec);
-            if (ec) {
-                tcp_packet::tcp_flags flags;
-                flags.flag.rst = true;
-                flags.flag.ack = true;
-                write_packet(flags, server_seq_num_, seq_num + 1);
-
-                do_close();
-                co_return;
-            }*/
-        ready_ = true;
         boost::asio::co_spawn(ioc_, read_remote_data(), boost::asio::detached);
 
         if (tun_wait_buffer_->size() != 0) {
@@ -381,9 +317,9 @@ private:
             boost::system::error_code ec;
 
             auto bytes = co_await socket_
-                             .async_read_some(read_buffer.prepare(
-                                                  std::min<uint16_t>(0x0FFF, client_window_size_)),
-                                              net_awaitable[ec]);
+                             ->async_read_some(read_buffer.prepare(
+                                                   std::min<uint16_t>(0x0FFF, client_window_size_)),
+                                               net_awaitable[ec]);
             if (ec) {
                 //代理远程主动关闭
                 if (state_ == tcp_state::ts_established) {
@@ -415,7 +351,7 @@ private:
 
         while (tun_sending_buffer_->size() != 0) {
             boost::system::error_code ec;
-            auto bytes = co_await boost::asio::async_write(socket_,
+            auto bytes = co_await boost::asio::async_write(*socket_,
                                                            tun_sending_buffer_->data(),
                                                            net_awaitable[ec]);
             if (ec) {
@@ -448,7 +384,7 @@ private:
 
         boost::asio::buffer_copy(tun_wait_buffer_->prepare(buffer.size()), buffer);
         tun_wait_buffer_->commit(buffer.size());
-        if (!ready_)
+        if (!socket_)
             return;
 
         if (tun_sending_buffer_->size() != 0)
@@ -460,12 +396,8 @@ private:
 
 private:
     boost::asio::io_context &ioc_;
-    close_function close_function_;
-    write_packet_function write_packet_function_;
-
-    bool ready_ = false;
-
-    boost::asio::ip::tcp::socket socket_;
+    interface::tun2socks &tun2socks_;
+    interface::tun2socks::tcp_socket_ptr socket_;
 
     std::unique_ptr<boost::asio::streambuf> tun_sending_buffer_;
     std::unique_ptr<boost::asio::streambuf> tun_wait_buffer_;

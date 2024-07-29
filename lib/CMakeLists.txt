@@ -22,8 +22,12 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_enums.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_error_code.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_io.hpp
 
+${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/tuntap.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/basic_tuntap.hpp
 
 ${CMAKE_CURRENT_SOURCE_DIR}/src/route/route.hpp
+
+${CMAKE_CURRENT_SOURCE_DIR}/src/interface.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/basic_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/misc.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/platform.hpp
@@ -32,13 +36,11 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/address_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/endpoint_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/checksum.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/ip_packet.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_packet.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_packet.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/ip_layer_stack.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/basic_tuntap.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks.cpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.h
@@ -50,8 +52,8 @@ if(APPLE)
 	)
 elseif(MSVC)
 	list(APPEND SRC_FILES 
-		${CMAKE_CURRENT_SOURCE_DIR}/src/wintun_service.hpp
-		${CMAKE_CURRENT_SOURCE_DIR}/src/wintun_library.hpp
+		${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/wintun_service.hpp
+		${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/wintun_library.hpp
 		${CMAKE_CURRENT_SOURCE_DIR}/src/route/route_win32.hpp
 	)
 endif()

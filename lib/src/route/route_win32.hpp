@@ -129,7 +129,7 @@ inline std::optional<route_ipv4> get_default_ipv4_route()
     return std::nullopt;
 }
 
-bool add_route_ipapi(const route_ipv4 &r)
+inline bool add_route_ipapi(const route_ipv4 &r)
 {
     bool ret = false;
     DWORD status;
@@ -183,7 +183,7 @@ bool add_route_ipapi(const route_ipv4 &r)
     return false;
 }
 
-bool del_route_ipapi(const route_ipv4 &r)
+inline bool del_route_ipapi(const route_ipv4 &r)
 {
     bool ret = false;
     DWORD status;

@@ -46,7 +46,7 @@ public:
         uint32_t seq_num = 0;
         uint32_t ack_num = 0;
         tcp_flags flags;
-        uint16_t window_size = 0xFFFF;
+        uint16_t window_size = 4096;
     };
 
 public:

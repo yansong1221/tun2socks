@@ -1,6 +1,6 @@
 #pragma once
 #include "ip_layer_stack.hpp"
-#include "tuntap.hpp"
+#include "tuntap/tuntap.hpp"
 #include <boost/asio.hpp>
 
 class tun_device
