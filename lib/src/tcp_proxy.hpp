@@ -104,7 +104,7 @@ public:
         tun_sending_buffer_ = std::make_unique<boost::asio::streambuf>();
         tun_wait_buffer_ = std::make_unique<boost::asio::streambuf>();
     }
-    ~tcp_proxy() { SPDLOG_INFO("断开连接: {0}", local_endpoint_pair_.to_string()); }
+    ~tcp_proxy() { spdlog::info("TCP断开连接: {0}", local_endpoint_pair_.to_string()); }
 
     boost::asio::awaitable<void> on_tcp_packet(const tcp_packet &packet)
     {
@@ -148,7 +148,6 @@ public:
             client_window_size_ = window_size;
 
             state_ = tcp_state::ts_established;
-            SPDLOG_INFO("三次握手成功,开始交换数据 {0}", local_endpoint_pair_.to_string());
             boost::asio::co_spawn(ioc_, start_proxy(), boost::asio::detached);
             co_return;
         } break;

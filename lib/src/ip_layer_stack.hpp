@@ -12,16 +12,17 @@
 class ip_layer_stack : public interface::tun2socks
 {
 public:
-    explicit ip_layer_stack(boost::asio::io_context &ioc, tuntap::tuntap &_tuntap)
+    explicit ip_layer_stack(boost::asio::io_context &ioc)
         : ioc_(ioc)
         , tuntap_(ioc)
     {}
     void start()
     {
         auto result = route::get_default_ipv4_route();
-
-        SPDLOG_INFO("if_addr: {0}", result->if_addr.to_string());
-        default_if_addr_ = result->if_addr;
+        if (result) {
+            default_if_addr_v4_ = result->if_addr;
+        }
+        spdlog::info("默认网络出口: {0}", default_if_addr_v4_.to_string());
 
         tuntap_.open();
         boost::asio::co_spawn(ioc_, receive_ip_packet(), boost::asio::detached);
@@ -91,6 +92,8 @@ public:
     virtual boost::asio::awaitable<tcp_socket_ptr> create_proxy_socket(
         const transport_layer::tcp_endpoint_pair &endpoint_pair)
     {
+        spdlog::info("tcp proxy: {}", endpoint_pair.to_string());
+
         auto pid = local_port_pid::tcp_using_port(endpoint_pair.src.port());
         local_port_pid::PrintProcessInfo(pid);
 
@@ -99,58 +102,103 @@ public:
         auto socket = std::make_shared<boost::asio::ip::tcp::socket>(
             co_await boost::asio::this_coro::executor);
 
-        socket->open(boost::asio::ip::tcp::v4());
-        socket->bind(boost::asio::ip::tcp::endpoint(default_if_addr_, 0), ec);
-        if (ec) {
-            SPDLOG_INFO("bind {0}", ec.message());
-            co_return nullptr;
-        }
+        if (true) {
+            open_bind_socket(*socket, endpoint_pair.dest, ec);
+            if (ec)
+                co_return nullptr;
 
-        co_await socket->async_connect(endpoint_pair.dest, net_awaitable[ec]);
+            co_await socket->async_connect(endpoint_pair.dest, net_awaitable[ec]);
+            if (ec) {
+                spdlog::warn("can't connect remote endpoint [{0}]:{1}",
+                             endpoint_pair.dest.address().to_string(),
+                             endpoint_pair.dest.port());
+                co_return nullptr;
+            }
 
-        if (ec) {
-            SPDLOG_WARN("can't conect tcp endpoint [{0}]:{1}",
-                        endpoint_pair.dest.address().to_string(),
-                        endpoint_pair.dest.port());
-            co_return nullptr;
-        }
-        /*proxy::socks_client_option op;
-            op.target_host = local_endpoint_pair_.dest.address().to_string();
-            op.target_port = local_endpoint_pair_.dest.port();
+        } else {
+            open_bind_socket(*socket, socks5_endpoint_, ec);
+            if (ec)
+                co_return nullptr;
+
+            co_await socket->async_connect(socks5_endpoint_, net_awaitable[ec]);
+
+            if (ec) {
+                spdlog::warn("can't connect socks5 server [{0}]:{1}",
+                             socks5_endpoint_.address().to_string(),
+                             socks5_endpoint_.port());
+                co_return nullptr;
+            }
+            proxy::socks_client_option op;
+            op.target_host = endpoint_pair.dest.address().to_string();
+            op.target_port = endpoint_pair.dest.port();
             op.proxy_hostname = false;
 
             boost::asio::ip::tcp::endpoint remote_endp;
-            co_await proxy::async_socks_handshake(socket_, op, remote_endp, ec);
+            co_await proxy::async_socks_handshake(*socket, op, remote_endp, ec);
             if (ec) {
-                tcp_packet::tcp_flags flags;
-                flags.flag.rst = true;
-                flags.flag.ack = true;
-                write_packet(flags, server_seq_num_, seq_num + 1);
-
-                do_close();
-                co_return;
-            }*/
+                spdlog::warn("can't connect socks5 server [{0}]:{1}",
+                             socks5_endpoint_.address().to_string(),
+                             socks5_endpoint_.port());
+                co_return nullptr;
+            }
+        }
         co_return socket;
     }
     boost::asio::awaitable<udp_socket_ptr> create_proxy_socket(
         const transport_layer::udp_endpoint_pair &endpoint_pair,
         boost::asio::ip::udp::endpoint &proxy_endpoint) override
     {
+        spdlog::info("udp proxy: {}", endpoint_pair.to_string());
+
         auto pid = local_port_pid::udp_using_port(endpoint_pair.src.port());
         local_port_pid::PrintProcessInfo(pid);
+
+        if (endpoint_pair.dest.protocol() == boost::asio::ip::udp::v6())
+            co_return nullptr;
 
         boost::system::error_code ec;
 
         auto socket = std::make_shared<boost::asio::ip::udp::socket>(
             co_await boost::asio::this_coro::executor);
 
-        socket->open(boost::asio::ip::udp::v4());
-        socket->bind(boost::asio::ip::udp::endpoint(default_if_addr_, 0), ec);
-        if (ec) {
-            SPDLOG_INFO("bind {0}", ec.message());
-            co_return nullptr;
+        if (true) {
+            open_bind_socket(*socket, endpoint_pair.dest, ec);
+            if (ec)
+                co_return nullptr;
+            proxy_endpoint = endpoint_pair.dest;
+        } else {
+            boost::asio::ip::tcp::socket proxy_sock(co_await boost::asio::this_coro::executor);
+            open_bind_socket(proxy_sock, socks5_endpoint_, ec);
+            if (ec)
+                co_return nullptr;
+
+            co_await proxy_sock.async_connect(socks5_endpoint_, net_awaitable[ec]);
+
+            if (ec) {
+                spdlog::warn("can't connect socks5 server [{0}]:{1}",
+                             socks5_endpoint_.address().to_string(),
+                             socks5_endpoint_.port());
+                co_return nullptr;
+            }
+            proxy::socks_client_option op;
+            op.target_host = endpoint_pair.dest.address().to_string();
+            op.target_port = endpoint_pair.dest.port();
+            op.proxy_hostname = false;
+
+            boost::asio::ip::udp::endpoint remote_endp;
+            co_await proxy::async_socks_handshake(proxy_sock, op, remote_endp, ec);
+            if (ec) {
+                spdlog::warn("can't connect socks5 server [{0}]:{1}",
+                             socks5_endpoint_.address().to_string(),
+                             socks5_endpoint_.port());
+                co_return nullptr;
+            }
+            open_bind_socket(*socket, proxy_endpoint, ec);
+            if (ec)
+                co_return nullptr;
+
+            proxy_endpoint = remote_endp;
         }
-        proxy_endpoint = endpoint_pair.dest;
         co_return socket;
     }
     void write_ip_packet(const network_layer::ip_packet &ip_pack)
@@ -167,6 +215,20 @@ public:
     }
 
 private:
+    template<typename Stream, typename InternetProtocol>
+    inline void open_bind_socket(Stream &sock,
+                                 const boost::asio::ip::basic_endpoint<InternetProtocol> &dest,
+                                 boost::system::error_code &ec)
+    {
+        sock.open(dest.protocol());
+        if (dest.protocol() == InternetProtocol::v4())
+            sock.bind(boost::asio::ip::basic_endpoint<InternetProtocol>(default_if_addr_v4_, 0), ec);
+        else
+            sock.bind(boost::asio::ip::basic_endpoint<InternetProtocol>(default_if_addr_v6_, 0), ec);
+        if (ec)
+            spdlog::error("bind {0}", ec.message());
+    }
+
     boost::asio::awaitable<void> write_tuntap_packet()
     {
         while (!write_tun_deque_.empty()) {
@@ -174,7 +236,7 @@ private:
             boost::system::error_code ec;
             auto bytes = co_await tuntap_.async_write_some(buffer->data(), net_awaitable[ec]);
             if (ec) {
-                SPDLOG_WARN("Write IP Packet to tuntap Device Failed: {0}", ec.message());
+                spdlog::warn("Write IP Packet to tuntap Device Failed: {0}", ec.message());
                 break;
             }
             if (bytes == 0) {
@@ -199,6 +261,7 @@ private:
         auto proxy = udp_proxy_map_[endpoint_pair];
         if (!proxy) {
             proxy = std::make_shared<udp_proxy>(ioc_, endpoint_pair, *this);
+            proxy->start();
             udp_proxy_map_[endpoint_pair] = proxy;
         }
         co_await proxy->on_udp_packet(*udp_pack);
@@ -223,7 +286,10 @@ private:
     boost::asio::io_context &ioc_;
     tuntap::tuntap tuntap_;
 
-    boost::asio::ip::address default_if_addr_;
+    boost::asio::ip::address_v4 default_if_addr_v4_;
+    boost::asio::ip::address_v6 default_if_addr_v6_;
+
+    boost::asio::ip::tcp::endpoint socks5_endpoint_;
 
     std::deque<std::unique_ptr<boost::asio::streambuf>> write_tun_deque_;
 

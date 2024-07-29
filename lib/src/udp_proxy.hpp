@@ -17,11 +17,12 @@ public:
         , udp_timeout_timer_(ioc)
         , local_endpoint_pair_(endpoint_pair)
         , remote_endpoint_pair_(endpoint_pair.swap())
-    {
-        boost::asio::co_spawn(ioc_, co_read_data(), boost::asio::detached);
-    }
+    {}
+    ~udp_proxy() { spdlog::info("UDP断开连接: {0}", local_endpoint_pair_.to_string()); }
 
 public:
+    void start() { boost::asio::co_spawn(ioc_, co_read_data(), boost::asio::detached); }
+
     boost::asio::awaitable<void> on_udp_packet(const transport_layer::udp_packet &pack)
     {
         if (!socket_)
@@ -31,10 +32,10 @@ public:
         co_await socket_->async_send_to(pack.payload(), proxy_endpoint_, net_awaitable[ec]);
 
         if (ec) {
-            SPDLOG_WARN("发送 UDP 数据失败: [{}]:{} {}",
-                        proxy_endpoint_.address().to_string(),
-                        proxy_endpoint_.port(),
-                        ec.message());
+            spdlog::warn("发送 UDP 数据失败: [{}]:{} {}",
+                         proxy_endpoint_.address().to_string(),
+                         proxy_endpoint_.port(),
+                         ec.message());
         }
     }
 
@@ -75,10 +76,10 @@ private:
                                                               proxy_endpoint_,
                                                               net_awaitable[ec]);
             if (ec) {
-                SPDLOG_WARN("从远端接收UDP 数据失败: [{}]:{} {}",
-                            proxy_endpoint_.address().to_string(),
-                            proxy_endpoint_.port(),
-                            ec.message());
+                spdlog::warn("从远端接收UDP 数据失败: [{}]:{} {}",
+                             proxy_endpoint_.address().to_string(),
+                             proxy_endpoint_.port(),
+                             ec.message());
                 do_close();
                 co_return;
             }
