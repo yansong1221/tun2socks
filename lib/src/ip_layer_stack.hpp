@@ -18,13 +18,39 @@ public:
     {}
     void start()
     {
-        auto result = route::get_default_ipv4_route();
-        if (result) {
-            default_if_addr_v4_ = result->if_addr;
-        }
-        spdlog::info("默认网络出口: {0}", default_if_addr_v4_.to_string());
+        std::string tun_name = "mate";
+        auto tun_ipv4_addr = boost::asio::ip::address_v4::from_string("10.6.7.7");
+        auto tun_ipv6_addr = boost::asio::ip::address_v6::from_string("fe80::613b:4e3f:81e9:7e01");
+        tuntap_.open(tun_name, tun_ipv4_addr, tun_ipv6_addr);
 
-        tuntap_.open();
+        auto ipv4_route = route::get_default_ipv4_route();
+        auto ipv6_route = route::get_default_ipv6_route();
+
+        if (ipv4_route)
+            default_if_addr_v4_ = ipv4_route->if_addr;
+        if (ipv6_route)
+            default_if_addr_v6_ = ipv6_route->if_addr;
+
+        spdlog::info("默认网络出口v4: {0}", default_if_addr_v4_.to_string());
+        spdlog::info("默认网络出口v6: {0}", default_if_addr_v6_.to_string());
+
+        {
+            route::route_ipv4 info;
+            info.if_addr = tun_ipv4_addr;
+            info.metric = 0;
+            info.netmask = boost::asio::ip::address_v4::any();
+            info.network = boost::asio::ip::address_v4::any();
+            route::add_route_ipapi(info);
+        }
+        {
+            route::route_ipv6 info;
+            info.if_addr = tun_ipv6_addr;
+            info.metric = 1;
+            info.dest = boost::asio::ip::address_v6::any();
+            info.prefix_length = 0;
+            route::add_route_ipapi(info);
+        }
+
         boost::asio::co_spawn(ioc_, receive_ip_packet(), boost::asio::detached);
     }
 

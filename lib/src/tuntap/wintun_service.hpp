@@ -13,14 +13,15 @@ public:
         , receive_event_(ioc)
     {}
 
-    inline void open()
+    inline void open(const std::string &tun_name,
+                     const boost::asio::ip::address_v4 &ipv4_addr,
+                     const boost::asio::ip::address_v6 &ipv6_addr)
     {
         boost::system::error_code ec;
 
         auto wintun_library = wintun::library::instance();
-        auto wintun_adapter = wintun_library->create_adapter("test", "test");
-        auto wintun_adapter2 = wintun_adapter;
-        wintun_session_ = wintun_adapter->create_session();
+        auto wintun_adapter = wintun_library->create_adapter(tun_name, tun_name);
+        wintun_session_ = wintun_adapter->create_session(ipv4_addr, ipv6_addr);
 
         receive_event_.assign(wintun_session_->read_wait_event());
     }

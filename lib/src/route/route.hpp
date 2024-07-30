@@ -18,7 +18,7 @@ struct route_ipv4
 struct route_ipv6
 {
     boost::asio::ip::address_v6 dest;
-    int prefix_length;
+    uint8_t prefix_length;
     boost::asio::ip::address_v6 if_addr;
     uint32_t metric;
 };
@@ -26,6 +26,11 @@ struct route_ipv6
 inline std::optional<route_ipv4> get_default_ipv4_route();
 inline std::optional<route_ipv6> get_default_ipv6_route();
 
+inline bool add_route_ipapi(const route_ipv4 &r);
+inline bool del_route_ipapi(const route_ipv4 &r);
+
+inline bool add_route_ipapi(const route_ipv6 &r);
+inline bool del_route_ipapi(const route_ipv6 &r);
 } // namespace route
 
 #include "route_win32.hpp"

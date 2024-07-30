@@ -34,6 +34,7 @@
 
 #include "misc.hpp"
 #include <filesystem>
+#include <format>
 #include <spdlog/spdlog.h>
 
 #pragma comment(lib, "iphlpapi.lib")
@@ -141,7 +142,7 @@ public:
         if (!_adapter)
             details::log_throw_last_system_error("Failed to create adapter");
 
-        return std::make_shared<adapter>(shared_from_this(), _adapter);
+        return std::make_shared<adapter>(shared_from_this(), _name, _tunnel_type, _adapter);
     }
     inline std::shared_ptr<adapter> create_adapter(const std::string &_name,
                                                    const std::string &_tunnel_type,
@@ -199,8 +200,13 @@ private:
 class adapter : public std::enable_shared_from_this<adapter>
 {
 public:
-    adapter(std::shared_ptr<library> _library, WINTUN_ADAPTER_HANDLE _adapter)
+    adapter(std::shared_ptr<library> _library,
+            std::string _name,
+            std::string _tunnel_type,
+            WINTUN_ADAPTER_HANDLE _adapter)
         : library_(_library)
+        , name_(_name)
+        , tunnel_type_(_tunnel_type)
         , wintun_adapter_(_adapter)
     {}
     ~adapter()
@@ -208,22 +214,43 @@ public:
         if (wintun_adapter_)
             library_->WintunCloseAdapter(wintun_adapter_);
     }
-    inline std::shared_ptr<session> create_session()
+    inline std::shared_ptr<session> create_session(const boost::asio::ip::address_v4 &ipv4_addr,
+                                                   const boost::asio::ip::address_v6 &ipv6_addr)
     {
-        MIB_UNICASTIPADDRESS_ROW AddressRow;
-        InitializeUnicastIpAddressEntry(&AddressRow);
+        if (!ipv4_addr.is_unspecified()) {
+            MIB_UNICASTIPADDRESS_ROW AddressRow;
+            InitializeUnicastIpAddressEntry(&AddressRow);
 
-        library_->WintunGetAdapterLUID(wintun_adapter_, &AddressRow.InterfaceLuid);
+            library_->WintunGetAdapterLUID(wintun_adapter_, &AddressRow.InterfaceLuid);
+            AddressRow.Address.Ipv4.sin_family = AF_INET;
+            AddressRow.Address.Ipv4.sin_addr.S_un.S_addr = ::htonl(ipv4_addr.to_ulong());
+            AddressRow.OnLinkPrefixLength = 24; /* This is a /32 network */
+            AddressRow.DadState = IpDadStatePreferred;
 
-        AddressRow.Address.Ipv4.sin_family = AF_INET;
-        AddressRow.Address.Ipv4.sin_addr.S_un.S_addr = htonl((10 << 24) | (6 << 16) | (7 << 8)
-                                                             | (7 << 0)); /* 10.6.7.7 */
-        AddressRow.OnLinkPrefixLength = 24; /* This is a /24 network */
-        AddressRow.DadState = IpDadStatePreferred;
+            auto LastError = CreateUnicastIpAddressEntry(&AddressRow);
+            if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
+                details::log_throw_system_error("Failed to set IPv4 address", LastError);
 
-        auto LastError = CreateUnicastIpAddressEntry(&AddressRow);
-        if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
-            details::log_throw_system_error("Failed to set IP address", LastError);
+            auto cmd
+                = std::format("netsh interface ip set dns name=\"{}\" source=static address=114.114.114.114",
+                              name_);
+            //set dns
+            system(cmd.c_str());
+        }
+        if (!ipv6_addr.is_unspecified()) {
+            MIB_UNICASTIPADDRESS_ROW AddressRow;
+            InitializeUnicastIpAddressEntry(&AddressRow);
+
+            library_->WintunGetAdapterLUID(wintun_adapter_, &AddressRow.InterfaceLuid);
+
+            AddressRow.Address.Ipv6.sin6_family = AF_INET6;
+            memcpy(AddressRow.Address.Ipv6.sin6_addr.u.Byte, ipv6_addr.to_bytes().data(), 16);
+            AddressRow.OnLinkPrefixLength = 128; /* This is a /128 network */
+            AddressRow.DadState = IpDadStatePreferred;
+            auto LastError = CreateUnicastIpAddressEntry(&AddressRow);
+            if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
+                details::log_throw_system_error("Failed to set IPv6 address", LastError);
+        }
 
         auto Session = library_->WintunStartSession(wintun_adapter_, 0x400000);
         if (!Session)
@@ -231,10 +258,12 @@ public:
 
         return std::make_shared<session>(shared_from_this(), Session);
     }
-    inline std::shared_ptr<session> create_session(boost::system::error_code &ec) noexcept
+    inline std::shared_ptr<session> create_session(const boost::asio::ip::address_v4 &ipv4_addr,
+                                                   const boost::asio::ip::address_v6 &ipv6_addr,
+                                                   boost::system::error_code &ec) noexcept
     {
         try {
-            return create_session();
+            return create_session(ipv4_addr, ipv6_addr);
 
         } catch (const boost::system::system_error &system_error) {
             ec = system_error.code();

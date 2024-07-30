@@ -11,7 +11,12 @@ public:
         : ioc_(ioc)
         , device_(ioc)
     {}
-    inline void open() { device_.open(); }
+    inline void open(const std::string &tun_name,
+                     const boost::asio::ip::address_v4 &ipv4_addr,
+                     const boost::asio::ip::address_v6 &ipv6_addr)
+    {
+        device_.open(tun_name, ipv4_addr, ipv6_addr);
+    }
     inline void close() { device_.close(); }
 
     auto get_executor() noexcept { return ioc_.get_executor(); }
