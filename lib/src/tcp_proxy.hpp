@@ -94,7 +94,7 @@ public:
 public:
     tcp_proxy(boost::asio::io_context &ioc,
               const transport_layer::tcp_endpoint_pair &endpoint_pair,
-              interface::tun2socks &_tun2socks)
+              abstract::tun2socks &_tun2socks)
         : ioc_(ioc)
         , state_(tcp_state::ts_listen)
         , tun2socks_(_tun2socks)
@@ -106,7 +106,7 @@ public:
     }
     ~tcp_proxy() { spdlog::info("TCP断开连接: {0}", local_endpoint_pair_.to_string()); }
 
-    boost::asio::awaitable<void> on_tcp_packet(const tcp_packet &packet)
+    void on_tcp_packet(const tcp_packet &packet)
     {
         auto flags = packet.header_data().flags;
         auto seq_num = packet.header_data().seq_num;
@@ -120,7 +120,7 @@ public:
         case tcp_state::ts_listen: {
             if (!flags.flag.syn) {
                 do_close();
-                co_return;
+                return;
             }
 
             state_ = tcp_state::ts_syn_rcvd;
@@ -132,16 +132,16 @@ public:
             flags.flag.ack = 1;
             write_packet(flags, server_seq_num_, seq_num + 1);
 
-            co_return;
+            return;
 
         } break;
         case tcp_state::ts_syn_rcvd: {
             if (!flags.flag.ack) {
-                co_return;
+                return;
             }
 
             if (ack_num != server_seq_num_ + 1 || seq_num != client_seq_num_ + 1) {
-                co_return;
+                return;
             }
             server_seq_num_++;
             client_seq_num_++;
@@ -149,15 +149,15 @@ public:
 
             state_ = tcp_state::ts_established;
             boost::asio::co_spawn(ioc_, start_proxy(), boost::asio::detached);
-            co_return;
+            return;
         } break;
         case tcp_state::ts_established: {
             if (!flags.flag.ack) {
-                co_return;
+                return;
             }
             if (flags.flag.rst) {
                 do_close();
-                co_return;
+                return;
             }
 
             if (seq_num == client_seq_num_ - 1 || seq_num < client_seq_num_) {
@@ -165,7 +165,7 @@ public:
                 flags.flag.ack = true;
 
                 write_packet(flags, server_seq_num_, client_seq_num_);
-                co_return;
+                return;
             }
 
             client_window_size_ = window_size;
@@ -192,39 +192,39 @@ public:
                 write_packet(flags, server_seq_num_, seq_num + 1);
 
                 do_close();
-                co_return;
+                return;
             }
 
             write_client_data_to_proxy(packet.payload());
         } break;
         case tcp_state::ts_fin_wait_1: {
             if (ack_num != server_seq_num_) {
-                co_return;
+                return;
             }
             if (flags.flag.rst) {
                 do_close();
-                co_return;
+                return;
             }
 
             if (!flags.flag.ack)
-                co_return;
+                return;
 
             state_ = tcp_state::ts_fin_wait_2;
 
         } break;
         case tcp_state::ts_fin_wait_2: {
             if (ack_num != server_seq_num_) {
-                co_return;
+                return;
             }
             if (flags.flag.rst) {
                 do_close();
-                co_return;
+                return;
             }
 
             if (!flags.flag.ack)
-                co_return;
+                return;
             if (!flags.flag.fin)
-                co_return;
+                return;
 
             tcp_packet::tcp_flags flags;
             flags.flag.ack = true;
@@ -237,10 +237,10 @@ public:
             break;
         case tcp_state::ts_last_ack: {
             if (!flags.flag.ack) {
-                co_return;
+                return;
             }
             if (ack_num != server_seq_num_ + 1) {
-                co_return;
+                return;
             }
             do_close();
         } break;
@@ -395,8 +395,8 @@ private:
 
 private:
     boost::asio::io_context &ioc_;
-    interface::tun2socks &tun2socks_;
-    interface::tun2socks::tcp_socket_ptr socket_;
+    abstract::tun2socks &tun2socks_;
+    abstract::tun2socks::tcp_socket_ptr socket_;
 
     std::unique_ptr<boost::asio::streambuf> tun_sending_buffer_;
     std::unique_ptr<boost::asio::streambuf> tun_wait_buffer_;

@@ -9,7 +9,7 @@
 #include "udp_proxy.hpp"
 #include <queue>
 
-class ip_layer_stack : public interface::tun2socks
+class ip_layer_stack : public abstract::tun2socks
 {
 public:
     explicit ip_layer_stack(boost::asio::io_context &ioc)
@@ -54,18 +54,18 @@ public:
         boost::asio::co_spawn(ioc_, receive_ip_packet(), boost::asio::detached);
     }
 
-    boost::asio::awaitable<void> on_ip_packet(boost::asio::streambuf &&buffer)
+    void on_ip_packet(const boost::asio::streambuf &buffer)
     {
         auto ip_pack = network_layer::ip_packet::from_packet(buffer.data());
         if (!ip_pack)
-            co_return;
+            return;
 
         switch (ip_pack->next_protocol()) {
         case transport_layer::udp_packet::protocol:
-            co_await on_udp_packet(*ip_pack);
+            on_udp_packet(*ip_pack);
             break;
         case transport_layer::tcp_packet::protocol:
-            co_await on_tcp_packet(*ip_pack);
+            on_tcp_packet(*ip_pack);
             break;
         default:
             break;
@@ -73,16 +73,17 @@ public:
     }
     boost::asio::awaitable<void> receive_ip_packet()
     {
+        boost::asio::streambuf buffer;
+
         for (;;) {
             boost::system::error_code ec;
-            boost::asio::streambuf buffer;
             auto bytes = co_await tuntap_.async_read_some(buffer.prepare(64 * 1024),
                                                           net_awaitable[ec]);
             if (ec)
                 co_return;
             buffer.commit(bytes);
-            //co_await start_ip_packet(std::move(buffer));
-            boost::asio::co_spawn(ioc_, on_ip_packet(std::move(buffer)), boost::asio::detached);
+            on_ip_packet(buffer);
+            buffer.consume(bytes);
         }
     };
 
@@ -229,15 +230,14 @@ public:
     }
     void write_ip_packet(const network_layer::ip_packet &ip_pack)
     {
-        auto buffer = std::make_unique<boost::asio::streambuf>();
-        ip_pack.make_packet(*buffer);
+        boost::asio::streambuf buffer;
+        ip_pack.make_packet(buffer);
 
-        bool write_in_process = !write_tun_deque_.empty();
-        write_tun_deque_.push_back(std::move(buffer));
-        if (write_in_process)
-            return;
+        std::vector<uint8_t> copy_buffer;
+        copy_buffer.resize(buffer.size());
+        boost::asio::buffer_copy(boost::asio::buffer(copy_buffer), buffer.data());
 
-        boost::asio::co_spawn(ioc_, write_tuntap_packet(), boost::asio::detached);
+        tuntap_.write_packet(std::move(copy_buffer));
     }
 
 private:
@@ -254,34 +254,11 @@ private:
         if (ec)
             spdlog::error("bind {0}", ec.message());
     }
-
-    boost::asio::awaitable<void> write_tuntap_packet()
-    {
-        while (!write_tun_deque_.empty()) {
-            const auto &buffer = write_tun_deque_.front();
-            boost::system::error_code ec;
-            auto bytes = co_await tuntap_.async_write_some(buffer->data(), net_awaitable[ec]);
-            if (ec) {
-                spdlog::warn("Write IP Packet to tuntap Device Failed: {0}", ec.message());
-                break;
-            }
-            if (bytes == 0) {
-                boost::asio::steady_timer try_again_timer(co_await boost::asio::this_coro::executor);
-                try_again_timer.expires_from_now(std::chrono::milliseconds(64));
-                co_await try_again_timer.async_wait(net_awaitable[ec]);
-                if (ec)
-                    break;
-                continue;
-            }
-            write_tun_deque_.pop_front();
-        }
-        co_return;
-    }
-    boost::asio::awaitable<void> on_udp_packet(const network_layer::ip_packet &ip_pack)
+    void on_udp_packet(const network_layer::ip_packet &ip_pack)
     {
         auto udp_pack = transport_layer::udp_packet::from_ip_packet(ip_pack);
         if (!udp_pack)
-            co_return;
+            return;
 
         auto endpoint_pair = udp_pack->endpoint_pair();
         auto proxy = udp_proxy_map_[endpoint_pair];
@@ -290,13 +267,13 @@ private:
             proxy->start();
             udp_proxy_map_[endpoint_pair] = proxy;
         }
-        co_await proxy->on_udp_packet(*udp_pack);
+        proxy->on_udp_packet(*udp_pack);
     }
-    boost::asio::awaitable<void> on_tcp_packet(const network_layer::ip_packet &ip_pack)
+    void on_tcp_packet(const network_layer::ip_packet &ip_pack)
     {
         auto tcp_pack = transport_layer::tcp_packet::from_ip_packet(ip_pack);
         if (!tcp_pack)
-            co_return;
+            return;
 
         auto endpoint_pair = tcp_pack->endpoint_pair();
 
@@ -305,7 +282,7 @@ private:
             proxy = std::make_shared<transport_layer::tcp_proxy>(ioc_, endpoint_pair, *this);
             tcp_proxy_map_[endpoint_pair] = proxy;
         }
-        co_await proxy->on_tcp_packet(*tcp_pack);
+        proxy->on_tcp_packet(*tcp_pack);
     }
 
 private:
@@ -316,8 +293,6 @@ private:
     boost::asio::ip::address_v6 default_if_addr_v6_;
 
     boost::asio::ip::tcp::endpoint socks5_endpoint_;
-
-    std::deque<std::unique_ptr<boost::asio::streambuf>> write_tun_deque_;
 
     std::unordered_map<transport_layer::tcp_endpoint_pair, transport_layer::tcp_proxy::ptr>
         tcp_proxy_map_;

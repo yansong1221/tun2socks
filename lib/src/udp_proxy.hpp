@@ -11,7 +11,7 @@ public:
 
     explicit udp_proxy(boost::asio::io_context &ioc,
                        const transport_layer::udp_endpoint_pair &endpoint_pair,
-                       interface::tun2socks &_tun2socks)
+                       abstract::tun2socks &_tun2socks)
         : ioc_(ioc)
         , tun2socks_(_tun2socks)
         , udp_timeout_timer_(ioc)
@@ -23,20 +23,23 @@ public:
 public:
     void start() { boost::asio::co_spawn(ioc_, co_read_data(), boost::asio::detached); }
 
-    boost::asio::awaitable<void> on_udp_packet(const transport_layer::udp_packet &pack)
+    void on_udp_packet(const transport_layer::udp_packet &pack)
     {
-        if (!socket_)
-            co_return;
-        reset_timeout_timer();
-        boost::system::error_code ec;
-        co_await socket_->async_send_to(pack.payload(), proxy_endpoint_, net_awaitable[ec]);
+        std::vector<uint8_t> buffer;
+        buffer.resize(pack.payload().size());
+        boost::asio::buffer_copy(boost::asio::buffer(buffer), pack.payload());
+        bool write_in_process = !send_buffer_.empty();
+        send_buffer_.push_back(std::move(buffer));
 
-        if (ec) {
-            spdlog::warn("发送 UDP 数据失败: [{}]:{} {}",
-                         proxy_endpoint_.address().to_string(),
-                         proxy_endpoint_.port(),
-                         ec.message());
-        }
+        reset_timeout_timer();
+
+        if (!socket_)
+            return;
+
+        if (write_in_process)
+            return;
+
+        boost::asio::co_spawn(ioc_, write_to_proxy(), boost::asio::detached);
     }
 
 private:
@@ -102,12 +105,38 @@ private:
     }
 
 private:
+    boost::asio::awaitable<void> write_to_proxy()
+    {
+        auto self = shared_from_this();
+
+        while (!send_buffer_.empty()) {
+            boost::system::error_code ec;
+            const auto &buffer = send_buffer_.front();
+            co_await socket_->async_send_to(boost::asio::buffer(buffer),
+                                            proxy_endpoint_,
+                                            net_awaitable[ec]);
+
+            if (ec) {
+                spdlog::warn("发送 UDP 数据失败: [{}]:{} {}",
+                             proxy_endpoint_.address().to_string(),
+                             proxy_endpoint_.port(),
+                             ec.message());
+                do_close();
+                co_return;
+            }
+            send_buffer_.pop_front();
+        }
+    }
+
+private:
     boost::asio::io_context &ioc_;
-    interface::tun2socks::udp_socket_ptr socket_;
-    interface::tun2socks &tun2socks_;
+    abstract::tun2socks::udp_socket_ptr socket_;
+    abstract::tun2socks &tun2socks_;
 
     std::chrono::seconds udp_timeout_seconds_ = std::chrono::seconds(60);
     boost::asio::steady_timer udp_timeout_timer_;
+
+    std::deque<std::vector<uint8_t>> send_buffer_;
 
     transport_layer::udp_endpoint_pair local_endpoint_pair_;
     transport_layer::udp_endpoint_pair remote_endpoint_pair_;

@@ -37,8 +37,12 @@
 #include <format>
 #include <spdlog/spdlog.h>
 
-#pragma comment(lib, "iphlpapi.lib")
+#include <comdef.h>
 
+#include <Wbemidl.h>
+
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "wbemuuid.lib")
 namespace wintun {
 
 namespace details {
@@ -73,6 +77,204 @@ static void CALLBACK ConsoleLogger(_In_ WINTUN_LOGGER_LEVEL Level,
     default:
         return;
     }
+}
+
+static bool SetDNS(const std::wstring &adapterName, const std::vector<std::wstring> &dnsServers)
+{
+    HRESULT hres;
+
+    // 初始化COM库
+    hres = CoInitializeEx(0, COINIT_MULTITHREADED);
+    if (FAILED(hres)) {
+        std::cerr << "Failed to initialize COM library. Error code = 0x" << std::hex << hres
+                  << std::endl;
+        return false;
+    }
+
+    // 初始化安全性
+    hres = CoInitializeSecurity(NULL,
+                                -1,                          // COM默认授权服务
+                                NULL,                        // COM默认授权服务
+                                NULL,                        // 保留为 NULL
+                                RPC_C_AUTHN_LEVEL_DEFAULT,   // 默认认证
+                                RPC_C_IMP_LEVEL_IMPERSONATE, // 默认模拟级别
+                                NULL,                        // 认证服务的代理身份
+                                EOAC_NONE,                   // 不使用额外功能
+                                NULL                         // 保留为 NULL
+    );
+
+    if (FAILED(hres)) {
+        std::cerr << "Failed to initialize security. Error code = 0x" << std::hex << hres
+                  << std::endl;
+        CoUninitialize();
+        return false;
+    }
+
+    // 创建WMI连接
+    IWbemLocator *pLoc = NULL;
+    hres = CoCreateInstance(CLSID_WbemLocator,
+                            0,
+                            CLSCTX_INPROC_SERVER,
+                            IID_IWbemLocator,
+                            (LPVOID *) &pLoc);
+
+    if (FAILED(hres)) {
+        std::cerr << "Failed to create IWbemLocator object. Error code = 0x" << std::hex << hres
+                  << std::endl;
+        CoUninitialize();
+        return false;
+    }
+
+    IWbemServices *pSvc = NULL;
+
+    // 连接到 WMI
+    hres = pLoc->ConnectServer(_bstr_t(L"ROOT\\CIMV2"), // WMI 命名空间
+                               NULL,                    // 用户名（NULL = 当前用户）
+                               NULL,                    // 用户密码（NULL = 当前密码）
+                               0,                       // 本地化设置
+                               NULL,                    // 安全标志
+                               0,                       // 权限标志
+                               0,                       // 权限代理
+                               &pSvc                    // 接收 IWbemServices 指针
+    );
+
+    if (FAILED(hres)) {
+        std::cerr << "Could not connect to WMI server. Error code = 0x" << std::hex << hres
+                  << std::endl;
+        pLoc->Release();
+        CoUninitialize();
+        return false;
+    }
+
+    // 设置WMI安全设置
+    hres = CoSetProxyBlanket(pSvc,                        // IWbemServices 代理
+                             RPC_C_AUTHN_WINNT,           // 身份验证服务
+                             RPC_C_AUTHZ_NONE,            // 授权服务
+                             NULL,                        // 服务器的相对名称
+                             RPC_C_AUTHN_LEVEL_CALL,      // 认证级别
+                             RPC_C_IMP_LEVEL_IMPERSONATE, // 模拟级别
+                             NULL,                        // 客户端身份
+                             EOAC_NONE                    // 代理功能
+    );
+
+    if (FAILED(hres)) {
+        std::cerr << "Could not set proxy blanket. Error code = 0x" << std::hex << hres
+                  << std::endl;
+        pSvc->Release();
+        pLoc->Release();
+        CoUninitialize();
+        return false;
+    }
+
+    // 查询所有启用了 IP 的网络适配器
+    IEnumWbemClassObject *pEnumerator = NULL;
+    hres = pSvc->ExecQuery(
+        bstr_t("WQL"),
+        bstr_t("SELECT * FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE"),
+        WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
+        NULL,
+        &pEnumerator);
+
+    if (FAILED(hres)) {
+        std::cerr << "WMI query failed. Error code = 0x" << std::hex << hres << std::endl;
+        pSvc->Release();
+        pLoc->Release();
+        CoUninitialize();
+        return false;
+    }
+
+    // 处理结果
+    IWbemClassObject *pclsObj = NULL;
+    ULONG uReturn = 0;
+    bool found = false;
+
+    while (pEnumerator) {
+        HRESULT hr = pEnumerator->Next(WBEM_INFINITE, 1, &pclsObj, &uReturn);
+
+        if (0 == uReturn) {
+            break;
+        }
+
+        VARIANT vtProp;
+        hr = pclsObj->Get(L"ServiceName", 0, &vtProp, 0, 0);
+        if (SUCCEEDED(hr) && vtProp.vt == VT_BSTR) {
+            std::wstring netConnID = vtProp.bstrVal;
+            VariantClear(&vtProp);
+
+            // 检查适配器名称是否匹配
+            if (netConnID == L"wintun") {
+                found = true;
+
+                // 调用适配器上的 SetDNSServerSearchOrder 方法
+                IWbemClassObject *pClass = NULL;
+                pSvc->GetObject(bstr_t("Win32_NetworkAdapterConfiguration"), 0, NULL, &pClass, NULL);
+                IWbemClassObject *pInParamsDefinition = NULL;
+                pClass->GetMethod(bstr_t("SetDNSServerSearchOrder"), 0, &pInParamsDefinition, NULL);
+
+                IWbemClassObject *pClassInstance = NULL;
+                pInParamsDefinition->SpawnInstance(0, &pClassInstance);
+
+                SAFEARRAY *sa = SafeArrayCreateVector(VT_BSTR, 0, dnsServers.size());
+                LONG index = 0;
+                for (const auto &dns : dnsServers) {
+                    BSTR dnsServer = SysAllocString(dns.c_str());
+                    SafeArrayPutElement(sa, &index, dnsServer);
+                    SysFreeString(dnsServer);
+                    ++index;
+                }
+
+                VARIANT var;
+                var.vt = VT_ARRAY | VT_BSTR;
+                var.parray = sa;
+
+                hr = pClassInstance->Put(L"DNSServerSearchOrder", 0, &var, 0);
+                VariantClear(&var);
+                SafeArrayDestroy(sa);
+
+                IWbemClassObject *pOutParams;
+                hr = pSvc->ExecMethod(bstr_t("Win32_NetworkAdapterConfiguration"),
+                                      bstr_t("SetDNSServerSearchOrder"),
+                                      0,
+                                      NULL,
+                                      pClassInstance,
+                                      &pOutParams,
+                                      NULL);
+
+                if (FAILED(hr)) {
+                    std::cerr << "Failed to set DNS. Error code = 0x" << std::hex << hr
+                              << std::endl;
+                    pClassInstance->Release();
+                    pInParamsDefinition->Release();
+                    pClass->Release();
+                    pclsObj->Release();
+                    pSvc->Release();
+                    pLoc->Release();
+                    pEnumerator->Release();
+                    CoUninitialize();
+                    return false;
+                }
+
+                pClassInstance->Release();
+                pInParamsDefinition->Release();
+                pClass->Release();
+                break; // 找到匹配的适配器后，退出循环
+            }
+        }
+
+        pclsObj->Release();
+    }
+
+
+    if (!found) {
+        std::wcerr << L"Adapter '" << adapterName << L"' not found." << std::endl;
+    }
+
+    pSvc->Release();
+    pLoc->Release();
+    pEnumerator->Release();
+    CoUninitialize();
+
+    return found;
 }
 } // namespace details
 
@@ -126,6 +328,7 @@ public:
     inline std::shared_ptr<adapter> create_adapter(const std::string &_name,
                                                    const std::string &_tunnel_type)
     {
+        WintunDeleteDriver();
         std::wstring utf16_name = misc::utf8_utf16(_name);
         std::wstring utf16_tunnel_type = misc::utf8_utf16(_tunnel_type);
 
@@ -231,11 +434,7 @@ public:
             if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
                 details::log_throw_system_error("Failed to set IPv4 address", LastError);
 
-            auto cmd
-                = std::format("netsh interface ip set dns name=\"{}\" source=static address=114.114.114.114",
-                              name_);
-            //set dns
-            system(cmd.c_str());
+            
         }
         if (!ipv6_addr.is_unspecified()) {
             MIB_UNICASTIPADDRESS_ROW AddressRow;
@@ -255,6 +454,11 @@ public:
         auto Session = library_->WintunStartSession(wintun_adapter_, 0x400000);
         if (!Session)
             details::log_throw_last_system_error("Failed to create adapter");
+
+        auto cmd = std::format(
+            "netsh interface ip set dns name=\"{}\" source=static address=114.114.114.114", name_);
+        //set dns
+        system(cmd.c_str());
 
         return std::make_shared<session>(shared_from_this(), Session);
     }

@@ -2,7 +2,7 @@
 #include "tcp_packet.hpp"
 #include "udp_packet.hpp"
 
-namespace interface {
+namespace abstract {
 class tun2socks
 {
 public:
