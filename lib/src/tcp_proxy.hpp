@@ -96,6 +96,7 @@ public:
               const transport_layer::tcp_endpoint_pair &endpoint_pair,
               abstract::tun2socks &_tun2socks)
         : ioc_(ioc)
+        , send_ack_timer_(ioc)
         , state_(tcp_state::ts_listen)
         , tun2socks_(_tun2socks)
         , local_endpoint_pair_(endpoint_pair)
@@ -344,8 +345,9 @@ private:
             write_packet(flags, read_buffer.data());
 
             read_buffer.consume(bytes);
-
             server_seq_num_ += bytes;
+
+            send_ack_timer_.cancel(ec);
         }
     }
     boost::asio::awaitable<void> write_client_data_to_proxy()
@@ -380,10 +382,20 @@ private:
 
         client_seq_num_ += (uint32_t) buffer.size();
 
-        tcp_packet::tcp_flags flags;
-        flags.flag.ack = true;
+        //auto now = std::chrono::steady_clock::now();
 
-        write_packet(flags);
+        //if (!is_delay_sendding_) {
+        //    is_delay_sendding_ = true;
+        //    send_ack_timer_.expires_from_now(std::chrono::milliseconds(200));
+        //    send_ack_timer_.async_wait(
+        //        [this, self = shared_from_this()](const boost::system::error_code &ec) {
+        //            is_delay_sendding_ = false;
+        //            if (ec)
+        //                return;
+        //            send_ack();
+        //        });
+        //}
+        send_ack();
 
         boost::asio::buffer_copy(tun_wait_buffer_->prepare(buffer.size()), buffer);
         tun_wait_buffer_->commit(buffer.size());
@@ -395,6 +407,12 @@ private:
 
         tun_sending_buffer_.swap(tun_wait_buffer_);
         boost::asio::co_spawn(ioc_, write_client_data_to_proxy(), boost::asio::detached);
+    }
+    inline void send_ack()
+    {
+        tcp_packet::tcp_flags flags;
+        flags.flag.ack = true;
+        write_packet(flags);
     }
 
 private:
@@ -412,5 +430,8 @@ private:
     uint16_t client_window_size_ = 0xFFFF;
     uint32_t server_seq_num_ = 0;
     tcp_state state_;
+
+    boost::asio::steady_timer send_ack_timer_;
+    bool is_delay_sendding_ = false;
 };
 } // namespace transport_layer
