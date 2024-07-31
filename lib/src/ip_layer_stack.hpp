@@ -18,10 +18,22 @@ public:
     {}
     void start()
     {
-        std::string tun_name = "mate";
-        auto tun_ipv4_addr = boost::asio::ip::address_v4::from_string("10.6.7.7");
-        auto tun_ipv6_addr = boost::asio::ip::address_v6::from_string("fe80::613b:4e3f:81e9:7e01");
-        tuntap_.open(tun_name, tun_ipv4_addr, tun_ipv6_addr);
+        tuntap::tun_parameter param;
+        param.tun_name = "mate";
+
+        tuntap::tun_parameter::address tun_ipv4;
+        tun_ipv4.addr = boost::asio::ip::address_v4::from_string("10.6.7.7");
+        tun_ipv4.dns = boost::asio::ip::address_v4::from_string("114.114.114.114");
+        tun_ipv4.prefix_length = 24;
+        param.ipv4 = tun_ipv4;
+
+        tuntap::tun_parameter::address tun_ipv6;
+        tun_ipv6.addr = boost::asio::ip::address_v6::from_string("fe80::613b:4e3f:81e9:7e01");
+        tun_ipv6.dns = boost::asio::ip::address_v6::from_string("2606:4700:4700::1111");
+        tun_ipv6.prefix_length = 64;
+        param.ipv6 = tun_ipv6;
+
+        tuntap_.open(param);
 
         auto ipv4_route = route::get_default_ipv4_route();
         auto ipv6_route = route::get_default_ipv6_route();
@@ -36,7 +48,7 @@ public:
 
         {
             route::route_ipv4 info;
-            info.if_addr = tun_ipv4_addr;
+            info.if_addr = tun_ipv4.addr.to_v4();
             info.metric = 0;
             info.netmask = boost::asio::ip::address_v4::any();
             info.network = boost::asio::ip::address_v4::any();
@@ -44,7 +56,7 @@ public:
         }
         {
             route::route_ipv6 info;
-            info.if_addr = tun_ipv6_addr;
+            info.if_addr = tun_ipv6.addr.to_v6();
             info.metric = 1;
             info.dest = boost::asio::ip::address_v6::any();
             info.prefix_length = 0;
@@ -54,9 +66,9 @@ public:
         boost::asio::co_spawn(ioc_, receive_ip_packet(), boost::asio::detached);
     }
 
-    void on_ip_packet(const boost::asio::streambuf &buffer)
+    void on_ip_packet(std::vector<uint8_t> &&buffer)
     {
-        auto ip_pack = network_layer::ip_packet::from_packet(buffer.data());
+        auto ip_pack = network_layer::ip_packet::from_packet(boost::asio::buffer(buffer));
         if (!ip_pack)
             return;
 
@@ -73,17 +85,17 @@ public:
     }
     boost::asio::awaitable<void> receive_ip_packet()
     {
-        boost::asio::streambuf buffer;
-
         for (;;) {
             boost::system::error_code ec;
-            auto bytes = co_await tuntap_.async_read_some(buffer.prepare(64 * 1024),
+            std::vector<uint8_t> buffer;
+            buffer.resize(64 * 1024);
+
+            auto bytes = co_await tuntap_.async_read_some(boost::asio::buffer(buffer),
                                                           net_awaitable[ec]);
             if (ec)
                 co_return;
-            buffer.commit(bytes);
-            on_ip_packet(buffer);
-            buffer.consume(bytes);
+            buffer.resize(bytes);
+            this->on_ip_packet(std::move(buffer));
         }
     };
 

@@ -168,6 +168,10 @@ public:
                 return;
             }
 
+            if (seq_num != client_seq_num_) {
+                return;
+            }
+
             client_window_size_ = window_size;
 
             //结束包 进行4次挥手

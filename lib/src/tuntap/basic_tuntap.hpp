@@ -3,6 +3,20 @@
 #include <deque>
 
 namespace tuntap {
+
+struct tun_parameter
+{
+    struct address
+    {
+        boost::asio::ip::address addr;
+        boost::asio::ip::address dns;
+        uint8_t prefix_length = 0;
+    };
+    std::string tun_name;
+    std::optional<address> ipv4;
+    std::optional<address> ipv6;
+};
+
 template<typename Device>
 class basic_tuntap
 {
@@ -10,18 +24,12 @@ public:
     typedef typename Device device_type;
 
     explicit basic_tuntap(boost::asio::io_context &ioc)
-        : ioc_(ioc)
-        , device_(ioc)
+        : device_(boost::asio::use_service<device_type>(ioc))
     {}
-    inline void open(const std::string &tun_name,
-                     const boost::asio::ip::address_v4 &ipv4_addr,
-                     const boost::asio::ip::address_v6 &ipv6_addr)
-    {
-        device_.open(tun_name, ipv4_addr, ipv6_addr);
-    }
+    inline void open(const tun_parameter &param) { device_.open(param); }
     inline void close() { device_.close(); }
 
-    auto get_executor() noexcept { return ioc_.get_executor(); }
+    auto get_executor() noexcept { return device_.get_executor(); }
 
     template<typename MutableBufferSequence,
              BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, std::size_t)) ReadToken>
@@ -39,16 +47,23 @@ public:
 
     void write_packet(std::vector<uint8_t> &&buffer)
     {
+        std::unique_lock<std::mutex> lck(write_lock_);
+
         bool write_in_process = !write_tun_deque_.empty();
         write_tun_deque_.push_back(std::move(buffer));
         if (write_in_process)
             return;
-        boost::asio::co_spawn(ioc_, write_tuntap_packet(), boost::asio::detached);
+        boost::asio::co_spawn(device_.get_io_context(),
+                              write_tuntap_packet(),
+                              boost::asio::detached);
     }
 
 private:
     boost::asio::awaitable<void> write_tuntap_packet()
     {
+        co_await boost::asio::post(co_await boost::asio::this_coro::executor,
+                                   boost::asio::use_awaitable);
+
         while (!write_tun_deque_.empty()) {
             const auto &buffer = write_tun_deque_.front();
             boost::system::error_code ec;
@@ -72,8 +87,8 @@ private:
     }
 
 private:
-    boost::asio::io_context &ioc_;
-    device_type device_;
+    device_type &device_;
+    std::mutex write_lock_;
     std::deque<std::vector<uint8_t>> write_tun_deque_;
 };
 } // namespace tuntap

@@ -1,27 +1,27 @@
 #pragma once
 #include "wintun_library.hpp"
 
+#include "tuntap/basic_tuntap.hpp"
 #include "use_awaitable.hpp"
 #include <boost/asio.hpp>
 #include <boost/asio/windows/object_handle.hpp>
 
-class wintun_service
+namespace tuntap {
+class wintun_service : public boost::asio::detail::service_base<wintun_service>
 {
 public:
     wintun_service(boost::asio::io_context &ioc)
-        : ioc_(ioc)
+        : boost::asio::detail::service_base<wintun_service>(ioc)
         , receive_event_(ioc)
     {}
 
-    inline void open(const std::string &tun_name,
-                     const boost::asio::ip::address_v4 &ipv4_addr,
-                     const boost::asio::ip::address_v6 &ipv6_addr)
+    inline void open(const tun_parameter &param)
     {
         boost::system::error_code ec;
 
         auto wintun_library = wintun::library::instance();
-        auto wintun_adapter = wintun_library->create_adapter(tun_name, tun_name);
-        wintun_session_ = wintun_adapter->create_session(ipv4_addr, ipv6_addr);
+        auto wintun_adapter = wintun_library->create_adapter(param);
+        wintun_session_ = wintun_adapter->create_session(param);
 
         receive_event_.assign(wintun_session_->read_wait_event());
     }
@@ -39,7 +39,7 @@ public:
         return boost::asio::async_initiate<ReadToken, void(boost::system::error_code, std::size_t)>(
             [this](auto &&handler, auto &&buffers) {
                 boost::asio::post(
-                    ioc_,
+                    this->get_io_context(),
                     [this, handler = std::move(handler), buffers = std::move(buffers)]() mutable {
                         boost::system::error_code read_error;
                         auto bytes_transferred = wintun_session_->receive_packet(buffers,
@@ -71,7 +71,7 @@ public:
         return boost::asio::async_initiate<WriteHandler,
                                            void(boost::system::error_code, std::size_t)>(
             [this](auto &&handler, auto &&buffers) mutable {
-                boost::asio::post(ioc_,
+                boost::asio::post(this->get_io_context(),
                                   [this,
                                    handler = std::move(handler),
                                    buffers = std::move(buffers)]() mutable {
@@ -87,14 +87,9 @@ public:
             handler,
             buffers);
     }
-    template<typename ConstBufferSequence>
-    void write(const ConstBufferSequence &buffers, boost::system::error_code &ec)
-    {
-        wintun_session_->send_packets(buffers, ec);
-    }
 
 private:
-    boost::asio::io_context &ioc_;
     boost::asio::windows::object_handle receive_event_;
     std::shared_ptr<wintun::session> wintun_session_;
 };
+} // namespace tuntap

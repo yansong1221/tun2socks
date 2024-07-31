@@ -41,6 +41,8 @@
 
 #include <Wbemidl.h>
 
+#include "tuntap/basic_tuntap.hpp"
+
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "wbemuuid.lib")
 namespace wintun {
@@ -264,7 +266,6 @@ static bool SetDNS(const std::wstring &adapterName, const std::vector<std::wstri
         pclsObj->Release();
     }
 
-
     if (!found) {
         std::wcerr << L"Adapter '" << adapterName << L"' not found." << std::endl;
     }
@@ -325,12 +326,11 @@ public:
             return nullptr;
         }
     }
-    inline std::shared_ptr<adapter> create_adapter(const std::string &_name,
-                                                   const std::string &_tunnel_type)
+    inline std::shared_ptr<adapter> create_adapter(const tuntap::tun_parameter &param)
     {
         WintunDeleteDriver();
-        std::wstring utf16_name = misc::utf8_utf16(_name);
-        std::wstring utf16_tunnel_type = misc::utf8_utf16(_tunnel_type);
+        std::wstring utf16_name = misc::utf8_utf16(param.tun_name);
+        std::wstring utf16_tunnel_type = misc::utf8_utf16(param.tun_name);
 
         /*details::utf8_utf16(_name, utf16_name);
         details::utf8_utf16(_tunnel_type, utf16_tunnel_type);*/
@@ -345,15 +345,13 @@ public:
         if (!_adapter)
             details::log_throw_last_system_error("Failed to create adapter");
 
-        return std::make_shared<adapter>(shared_from_this(), _name, _tunnel_type, _adapter);
+        return std::make_shared<adapter>(shared_from_this(), _adapter);
     }
-    inline std::shared_ptr<adapter> create_adapter(const std::string &_name,
-                                                   const std::string &_tunnel_type,
+    inline std::shared_ptr<adapter> create_adapter(const tuntap::tun_parameter &param,
                                                    boost::system::error_code &ec) noexcept
     {
         try {
-            ec.clear();
-            return create_adapter(_name, _tunnel_type);
+            return create_adapter(param);
 
         } catch (const boost::system::system_error &system_error) {
             ec = system_error.code();
@@ -403,13 +401,8 @@ private:
 class adapter : public std::enable_shared_from_this<adapter>
 {
 public:
-    adapter(std::shared_ptr<library> _library,
-            std::string _name,
-            std::string _tunnel_type,
-            WINTUN_ADAPTER_HANDLE _adapter)
+    adapter(std::shared_ptr<library> _library, WINTUN_ADAPTER_HANDLE _adapter)
         : library_(_library)
-        , name_(_name)
-        , tunnel_type_(_tunnel_type)
         , wintun_adapter_(_adapter)
     {}
     ~adapter()
@@ -417,34 +410,34 @@ public:
         if (wintun_adapter_)
             library_->WintunCloseAdapter(wintun_adapter_);
     }
-    inline std::shared_ptr<session> create_session(const boost::asio::ip::address_v4 &ipv4_addr,
-                                                   const boost::asio::ip::address_v6 &ipv6_addr)
+    inline std::shared_ptr<session> create_session(const tuntap::tun_parameter &param)
     {
-        if (!ipv4_addr.is_unspecified()) {
+        if (param.ipv4) {
             MIB_UNICASTIPADDRESS_ROW AddressRow;
             InitializeUnicastIpAddressEntry(&AddressRow);
 
             library_->WintunGetAdapterLUID(wintun_adapter_, &AddressRow.InterfaceLuid);
             AddressRow.Address.Ipv4.sin_family = AF_INET;
-            AddressRow.Address.Ipv4.sin_addr.S_un.S_addr = ::htonl(ipv4_addr.to_ulong());
-            AddressRow.OnLinkPrefixLength = 24; /* This is a /32 network */
+            AddressRow.Address.Ipv4.sin_addr.S_un.S_addr = ::htonl(
+                param.ipv4->addr.to_v4().to_ulong());
+            AddressRow.OnLinkPrefixLength = param.ipv4->prefix_length; /* This is a /32 network */
             AddressRow.DadState = IpDadStatePreferred;
 
             auto LastError = CreateUnicastIpAddressEntry(&AddressRow);
             if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
                 details::log_throw_system_error("Failed to set IPv4 address", LastError);
-
-            
         }
-        if (!ipv6_addr.is_unspecified()) {
+        if (param.ipv6) {
             MIB_UNICASTIPADDRESS_ROW AddressRow;
             InitializeUnicastIpAddressEntry(&AddressRow);
 
             library_->WintunGetAdapterLUID(wintun_adapter_, &AddressRow.InterfaceLuid);
 
             AddressRow.Address.Ipv6.sin6_family = AF_INET6;
-            memcpy(AddressRow.Address.Ipv6.sin6_addr.u.Byte, ipv6_addr.to_bytes().data(), 16);
-            AddressRow.OnLinkPrefixLength = 128; /* This is a /128 network */
+            memcpy(AddressRow.Address.Ipv6.sin6_addr.u.Byte,
+                   param.ipv6->addr.to_v6().to_bytes().data(),
+                   16);
+            AddressRow.OnLinkPrefixLength = param.ipv6->prefix_length; /* This is a /128 network */
             AddressRow.DadState = IpDadStatePreferred;
             auto LastError = CreateUnicastIpAddressEntry(&AddressRow);
             if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
@@ -455,19 +448,29 @@ public:
         if (!Session)
             details::log_throw_last_system_error("Failed to create adapter");
 
-        auto cmd = std::format(
-            "netsh interface ip set dns name=\"{}\" source=static address=114.114.114.114", name_);
-        //set dns
-        system(cmd.c_str());
+        if (param.ipv4) {
+            auto cmd
+                = std::format("netsh interface ip set dns name=\"{}\" source=static address={}",
+                              param.tun_name,
+                              param.ipv4->dns.to_v4().to_string());
+            //set dns
+            system(cmd.c_str());
+        }
+        if (param.ipv6) {
+            auto cmd = std::format("netsh interface ipv6 set dnsservers \"{}\" static {}",
+                                   param.tun_name,
+                                   param.ipv6->dns.to_v6().to_string());
+            //set dns
+            system(cmd.c_str());
+        }
 
         return std::make_shared<session>(shared_from_this(), Session);
     }
-    inline std::shared_ptr<session> create_session(const boost::asio::ip::address_v4 &ipv4_addr,
-                                                   const boost::asio::ip::address_v6 &ipv6_addr,
+    inline std::shared_ptr<session> create_session(const tuntap::tun_parameter &param,
                                                    boost::system::error_code &ec) noexcept
     {
         try {
-            return create_session(ipv4_addr, ipv6_addr);
+            return create_session(param);
 
         } catch (const boost::system::system_error &system_error) {
             ec = system_error.code();
@@ -480,9 +483,6 @@ private:
 
 private:
     std::shared_ptr<library> library_;
-
-    std::string name_;
-    std::string tunnel_type_;
 
     WINTUN_ADAPTER_HANDLE wintun_adapter_ = nullptr;
 
