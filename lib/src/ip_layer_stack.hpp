@@ -14,8 +14,7 @@ class ip_layer_stack : public abstract::tun2socks
 {
 public:
     explicit ip_layer_stack()
-        : tuntap_(pool_.getIOContext())
-        , ioc_(pool_.getIOContext())
+        : tuntap_(ioc_)
     {}
     void start()
     {
@@ -66,8 +65,9 @@ public:
 
         boost::asio::co_spawn(tuntap_.get_io_context(), receive_ip_packet(), boost::asio::detached);
 
-        pool_.Start();
-        pool_.Wait();
+        /*pool_.Start();
+        pool_.Wait();*/
+        ioc_.run();
     }
 
     void on_ip_packet(tuntap::recv_buffer_ptr buffer)
@@ -78,7 +78,7 @@ public:
 
         switch (ip_pack->next_protocol()) {
         case transport_layer::udp_packet::protocol:
-            //on_udp_packet(*ip_pack);
+            on_udp_packet(*ip_pack);
             break;
         case transport_layer::tcp_packet::protocol:
             on_tcp_packet(*ip_pack);
@@ -90,12 +90,16 @@ public:
     boost::asio::awaitable<void> receive_ip_packet()
     {
         for (;;) {
-            boost::system::error_code ec;
-            auto buffer = co_await tuntap_.async_read_some(net_awaitable[ec]);
-            if (ec)
-                co_return;
+            try {
+                boost::system::error_code ec;
+                auto buffer = co_await tuntap_.async_read_some(ec);
+                if (ec)
+                    co_return;
 
-            this->on_ip_packet(buffer);
+                this->on_ip_packet(buffer);
+            } catch (const std::exception &e) {
+                continue;
+            }
         }
     };
 
@@ -110,33 +114,30 @@ public:
 
     void write_tun_packet(const transport_layer::tcp_packet &pack) override
     {
-        std::vector<uint8_t> payload(0xFFFF, 0);
-        auto bytes = pack.make_packet(boost::asio::buffer(payload));
-        payload.resize(bytes);
+        boost::asio::streambuf payload;
+        pack.make_packet(payload);
 
         network_layer::ip_packet ip_pack(pack.endpoint_pair().to_address_pair(),
                                          transport_layer::tcp_packet::protocol,
-                                         std::move(payload));
+                                         payload.data());
         write_ip_packet(ip_pack);
     }
     void write_tun_packet(const transport_layer::udp_packet &pack) override
     {
-        std::vector<uint8_t> payload(0xFFFF, 0);
-        auto bytes = pack.make_packet(boost::asio::buffer(payload));
-        payload.resize(bytes);
+        boost::asio::streambuf payload;
+        pack.make_packet(payload);
 
         network_layer::ip_packet ip_pack(pack.endpoint_pair().to_address_pair(),
                                          transport_layer::udp_packet::protocol,
-                                         std::move(payload));
+                                         payload.data());
         write_ip_packet(ip_pack);
     }
     void write_ip_packet(const network_layer::ip_packet &ip_pack)
     {
-        std::vector<uint8_t> payload(0xFFFF, 0);
-        auto bytes = ip_pack.make_packet(boost::asio::buffer(payload));
-        payload.resize(bytes);
+        boost::asio::streambuf payload;
+        ip_pack.make_packet(payload);
 
-        tuntap_.write_packet(std::move(payload));
+        tuntap_.write_packet(payload.data());
     }
 
     virtual boost::asio::awaitable<tcp_socket_ptr> create_proxy_socket(
@@ -275,7 +276,7 @@ private:
         auto endpoint_pair = udp_pack->endpoint_pair();
         auto proxy = udp_proxy_map_[endpoint_pair];
         if (!proxy) {
-            proxy = std::make_shared<udp_proxy>(pool_.getIOContext(), endpoint_pair, *this);
+            proxy = std::make_shared<udp_proxy>(ioc_, endpoint_pair, *this);
             proxy->start();
             udp_proxy_map_[endpoint_pair] = proxy;
         }
@@ -291,17 +292,15 @@ private:
 
         auto proxy = tcp_proxy_map_[endpoint_pair];
         if (!proxy) {
-            proxy = std::make_shared<transport_layer::tcp_proxy>(pool_.getIOContext(),
-                                                                 endpoint_pair,
-                                                                 *this);
+            proxy = std::make_shared<transport_layer::tcp_proxy>(ioc_, endpoint_pair, *this);
             tcp_proxy_map_[endpoint_pair] = proxy;
         }
         proxy->on_tcp_packet(*tcp_pack);
     }
 
 private:
-    toys::pool::IOContextPool<1, 1> pool_;
-    boost::asio::io_context &ioc_;
+    //toys::pool::IOContextPool<1, 1> pool_;
+    boost::asio::io_context ioc_;
     tuntap::tuntap tuntap_;
 
     boost::asio::ip::address_v4 default_if_addr_v4_;

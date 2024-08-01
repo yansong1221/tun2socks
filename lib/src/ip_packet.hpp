@@ -60,7 +60,7 @@ class ip_packet
 public:
     ip_packet(const network_layer::address_pair_type &address_pair,
               uint8_t protocol,
-              const std::vector<uint8_t> &payload_data)
+              boost::asio::const_buffer payload_data)
         : address_pair_(address_pair)
         , protocol_(protocol)
         , payload_data_(payload_data)
@@ -69,9 +69,9 @@ public:
     const network_layer::address_pair_type &address_pair() const { return address_pair_; }
 
     uint8_t next_protocol() const { return protocol_; }
-    boost::asio::const_buffer payload_data() const { return boost::asio::buffer(payload_data_); }
+    boost::asio::const_buffer payload_data() const { return payload_data_; }
 
-    std::size_t make_packet(boost::asio::mutable_buffer buffer) const
+    void make_packet(boost::asio::streambuf &buffer) const
     {
         switch (address_pair_.ip_version()) {
         case 4: {
@@ -82,9 +82,10 @@ public:
 
             uint16_t tot_len = header_len + (uint16_t) payload_data_.size();
 
-            memset(buffer.data(), 0, tot_len);
+            auto header_buffer = buffer.prepare(tot_len);
+            memset(header_buffer.data(), 0, tot_len);
 
-            auto header = boost::asio::buffer_cast<details::ipv4_header *>(buffer);
+            auto header = boost::asio::buffer_cast<details::ipv4_header *>(header_buffer);
 
             header->ihl = ihl;
             header->version = 4;
@@ -98,7 +99,9 @@ public:
             header->check = checksum::checksum((const uint8_t *) (header), header_len);
             memcpy(header + 1, payload_data_.data(), payload_data_.size());
 
-            return tot_len;
+            buffer.commit(tot_len);
+
+            return;
 
         } break;
         case 6: {
@@ -108,7 +111,9 @@ public:
             auto src_addr_bytes = address_pair_.src.to_v6().to_bytes();
             auto dst_addr_bytes = address_pair_.dest.to_v6().to_bytes();
 
-            auto header = boost::asio::buffer_cast<details::ipv6_header *>(buffer);
+            auto header_buffer = buffer.prepare(header_len + payload_len);
+
+            auto header = boost::asio::buffer_cast<details::ipv6_header *>(header_buffer);
             memset(header, 0, sizeof(details::ipv6_header));
 
             header->version_traffic_flow = ::htonl(make_version_traffic_flow(6, 0, 0));
@@ -119,15 +124,15 @@ public:
             memcpy(header->src_addr, src_addr_bytes.data(), sizeof(header->src_addr));
             memcpy(header->dest_addr, dst_addr_bytes.data(), sizeof(header->dest_addr));
 
-            buffer += header_len;
+            header_buffer += header_len;
 
-            boost::asio::buffer_copy(buffer, boost::asio::buffer(payload_data_));
-            return header_len + payload_len;
+            boost::asio::buffer_copy(header_buffer, payload_data_);
+            buffer.commit(header_len + payload_len);
+            return;
         } break;
         default:
             break;
         }
-        return 0;
     }
     template<typename ConstBufferSequence>
     static std::unique_ptr<ip_packet> from_packet(ConstBufferSequence &&buffers)
@@ -170,10 +175,7 @@ public:
 
             buffers += header_len;
 
-            std::vector<uint8_t> payload(buffers.size());
-            boost::asio::buffer_copy(boost::asio::buffer(payload), buffers);
-
-            return std::make_unique<ip_packet>(addr_pair, header->protocol, payload);
+            return std::make_unique<ip_packet>(addr_pair, header->protocol, buffers);
         } break;
         case 6: {
             if (len < sizeof(details::ipv6_header)) {
@@ -203,10 +205,7 @@ public:
 
             buffers += sizeof(details::ipv6_header);
 
-            std::vector<uint8_t> payload(buffers.size());
-            boost::asio::buffer_copy(boost::asio::buffer(payload), buffers);
-
-            return std::make_unique<ip_packet>(addr_pair, header->next_header, payload);
+            return std::make_unique<ip_packet>(addr_pair, header->next_header, buffers);
         } break;
         default:
             break;
@@ -226,7 +225,7 @@ private:
 private:
     network_layer::address_pair_type address_pair_;
     uint8_t protocol_;
-    std::vector<uint8_t> payload_data_;
+    boost::asio::const_buffer payload_data_;
 };
 
 //template<typename Allocator, typename ConstBufferSequence>

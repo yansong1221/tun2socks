@@ -52,25 +52,26 @@ public:
 public:
     explicit tcp_packet(const tcp_endpoint_pair &_endpoint_pair,
                         const tcp_packet::header &header_data,
-                        std::vector<uint8_t> &&payload)
+                        boost::asio::const_buffer payload)
         : endpoint_pair_(_endpoint_pair)
         , header_data_(header_data)
-        , payload_(std::move(payload))
+        , payload_(payload)
 
     {}
 
     const tcp_endpoint_pair &endpoint_pair() const { return endpoint_pair_; }
-    boost::asio::const_buffer payload() const { return boost::asio::buffer(payload_); }
+    boost::asio::const_buffer payload() const { return payload_; }
 
     const tcp_packet::header &header_data() const { return header_data_; }
 
-    std::size_t make_packet(boost::asio::mutable_buffer buffers) const
+    void make_packet(boost::asio::streambuf &buffers) const
     {
         uint16_t length = sizeof(details::tcp_header) + (uint16_t) payload_.size();
 
-        memset(buffers.data(), 0, length);
+        auto header_buffer = buffers.prepare(length);
+        memset(header_buffer.data(), 0, length);
 
-        auto header = boost::asio::buffer_cast<details::tcp_header *>(buffers);
+        auto header = boost::asio::buffer_cast<details::tcp_header *>(header_buffer);
         header->src_port = ::htons(endpoint_pair_.src.port());
         header->dest_port = ::htons(endpoint_pair_.dest.port());
         header->seq_num = ::htonl(header_data_.seq_num);
@@ -78,12 +79,11 @@ public:
         header->data_offset = sizeof(details::tcp_header) / 4;
         header->flags = header_data_.flags.data;
         header->window_size = htons(header_data_.window_size);
-        header->checksum = checksum(header,
-                                    endpoint_pair_.to_address_pair(),
-                                    boost::asio::const_buffer((const uint8_t *) payload_.data(),
-                                                              payload_.size()));
+        header->checksum = checksum(header, endpoint_pair_.to_address_pair(), payload_);
         memcpy(header + 1, payload_.data(), payload_.size());
-        return length;
+
+        buffers.commit(length);
+        return;
     }
 
     inline static std::unique_ptr<tcp_packet> from_ip_packet(const network_layer::ip_packet &ip_pack)
@@ -128,10 +128,7 @@ public:
         header_data.window_size = ntohs(header->window_size);
         header_data.flags.data = header->flags;
 
-        std::vector<uint8_t> payload(buffer.size());
-        boost::asio::buffer_copy(boost::asio::buffer(payload), buffer);
-
-        return std::make_unique<tcp_packet>(endpoint_pair, header_data, std::move(payload));
+        return std::make_unique<tcp_packet>(endpoint_pair, header_data, buffer);
     }
 
 private:
@@ -192,7 +189,6 @@ private:
 private:
     header header_data_;
     tcp_endpoint_pair endpoint_pair_;
-    std::vector<uint8_t> payload_;
-    std::size_t offset_;
+    boost::asio::const_buffer payload_;
 };
 } // namespace transport_layer

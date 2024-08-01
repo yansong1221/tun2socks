@@ -33,54 +33,29 @@ public:
         receive_event_.close(ec);
     }
 
-    template<BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, recv_buffer_ptr))
-                 ReadToken>
-    auto async_read_some(ReadToken &&handler)
+    boost::asio::awaitable<recv_buffer_ptr> async_read_some(boost::system::error_code &ec)
     {
-        return boost::asio::async_initiate<ReadToken,
-                                           void(boost::system::error_code, recv_buffer_ptr)>(
-            [this](auto &&handler) {
-                boost::system::error_code read_error;
-                auto buffer = wintun_session_->receive_packet(read_error);
-                if (read_error || buffer) {
-                    handler(read_error, buffer);
-                    return;
-                }
+        co_await boost::asio::post(this->get_io_context(), boost::asio::use_awaitable);
 
-                receive_event_.async_wait([this, handler = std::move(handler)](
-                                              const boost::system::error_code &ec) mutable {
-                    if (ec) {
-                        handler(ec, nullptr);
-                        return;
-                    }
-                    this->async_read_some(handler);
-                });
-            },
-            handler);
+        for (;;) {
+            auto buffer = wintun_session_->receive_packet(ec);
+            if (buffer)
+                co_return buffer;
+            co_await receive_event_.async_wait(net_awaitable[ec]);
+            if (ec)
+                co_return nullptr;
+        }
     }
-    template<typename ConstBufferSequence,
-             BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, std::size_t))
-                 WriteHandler>
-    auto async_write_some(const ConstBufferSequence &buffers, WriteHandler &&handler)
+    template<typename ConstBufferSequence>
+    boost::asio::awaitable<std::size_t> async_write_some(const ConstBufferSequence &buffers,
+                                                         boost::system::error_code &ec)
     {
-        return boost::asio::async_initiate<WriteHandler,
-                                           void(boost::system::error_code, std::size_t)>(
-            [this](auto &&handler, auto &&buffers) mutable {
-                boost::asio::post(this->get_io_context(),
-                                  [this,
-                                   handler = std::move(handler),
-                                   buffers = std::move(buffers)]() mutable {
-                                      boost::system::error_code ec;
-                                      wintun_session_->send_packets(buffers, ec);
-                                      if (ec) {
-                                          handler(ec, 0);
-                                          return;
-                                      }
-                                      handler(ec, boost::asio::buffer_size(buffers));
-                                  });
-            },
-            handler,
-            buffers);
+        co_await boost::asio::post(this->get_io_context(), boost::asio::use_awaitable);
+        wintun_session_->send_packets(buffers, ec);
+        if (ec)
+            co_return 0;
+
+        co_return boost::asio::buffer_size(buffers);
     }
 
 private:

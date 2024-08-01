@@ -25,22 +25,18 @@ public:
 
     void on_udp_packet(const transport_layer::udp_packet &pack)
     {
-        return;
-        ioc_.post([=]() {
+        bool write_in_process = !send_buffer_.empty();
+        send_buffer_.push_back(pack.payload_vec());
 
-            bool write_in_process = !send_buffer_.empty();
-            send_buffer_.push_back(pack.payload_vec());
+        reset_timeout_timer();
 
-            reset_timeout_timer();
+        if (!socket_)
+            return;
 
-            if (!socket_)
-                return;
+        if (write_in_process)
+            return;
 
-            if (write_in_process)
-                return;
-
-            boost::asio::co_spawn(ioc_, write_to_proxy(), boost::asio::detached);
-        });
+        boost::asio::co_spawn(ioc_, write_to_proxy(), boost::asio::detached);
     }
 
 private:

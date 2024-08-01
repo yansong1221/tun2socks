@@ -30,13 +30,14 @@ public:
     inline boost::asio::const_buffer payload() const { return boost::asio::buffer(payload_); }
     const std::vector<uint8_t> &payload_vec() const { return payload_; }
 
-    std::size_t make_packet(boost::asio::mutable_buffer buffers) const
+    void make_packet(boost::asio::streambuf &buffers) const
     {
         uint16_t length = sizeof(details::udp_header) + (uint16_t) payload_.size();
 
-        memset(buffers.data(), 0, length);
+        auto header_buffer = buffers.prepare(length);
+        memset(header_buffer.data(), 0, length);
 
-        auto header = boost::asio::buffer_cast<details::udp_header *>(buffers);
+        auto header = boost::asio::buffer_cast<details::udp_header *>(header_buffer);
         header->src_port = ::htons(endpoint_pair_.src.port());
         header->dest_port = ::htons(endpoint_pair_.dest.port());
         header->length = ::htons(length);
@@ -45,7 +46,8 @@ public:
                                     boost::asio::buffer(payload_));
 
         memcpy(header + 1, payload_.data(), payload_.size());
-        return length;
+
+        buffers.commit(length);
     }
 
     inline static std::unique_ptr<udp_packet> from_ip_packet(const network_layer::ip_packet &ip_pack)

@@ -461,6 +461,21 @@ public:
         DWORD size_;
     };
 
+    class wintun_recv_buffer2 : public tuntap::recv_buffer
+    {
+    public:
+        inline boost::asio::const_buffer data() const override { return buffer_.data(); }
+
+        void copy(BYTE *packet, DWORD size)
+        {
+            boost::asio::buffer_copy(buffer_.prepare(size), boost::asio::const_buffer(packet, size));
+            buffer_.commit(size);
+        }
+
+    private:
+        boost::asio::streambuf buffer_;
+    };
+
 public:
     static std::shared_ptr<session> create(std::shared_ptr<adapter> _adapter,
                                            WINTUN_SESSION_HANDLE _session)
@@ -478,10 +493,12 @@ public:
     {
         DWORD PacketSize;
         BYTE *Packet = adapter_->get_library()->WintunReceivePacket(wintun_session_, &PacketSize);
-        if (Packet)
-            return std::make_shared<session::wintun_recv_buffer>(shared_from_this(),
-                                                                 Packet,
-                                                                 PacketSize);
+        if (Packet) {
+            auto buffer = std::make_shared<session::wintun_recv_buffer2>();
+            buffer->copy(Packet, PacketSize);
+            release_receive_packet(Packet);
+            return buffer;
+        }
 
         DWORD LastError = GetLastError();
         if (LastError != ERROR_NO_MORE_ITEMS)

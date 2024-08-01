@@ -32,24 +32,25 @@ public:
 
     boost::asio::io_context &get_io_context() noexcept { return device_.get_io_context(); }
 
-    template<BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, recv_buffer_ptr))
-                 ReadToken>
-    auto async_read_some(ReadToken &&handler)
+    boost::asio::awaitable<recv_buffer_ptr> async_read_some(boost::system::error_code &ec)
     {
-        return device_.async_read_some(handler);
+        return device_.async_read_some(ec);
     }
-    template<typename ConstBufferSequence,
-             BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, std::size_t))
-                 WriteHandler>
-    auto async_write_some(const ConstBufferSequence &buffers, WriteHandler &&handler)
+    template<typename ConstBufferSequence>
+    boost::asio::awaitable<std::size_t> async_write_some(const ConstBufferSequence &buffers,
+                                                         boost::system::error_code &ec)
     {
-        return device_.async_write_some(buffers, handler);
+        return device_.async_write_some(buffers, ec);
     }
 
-    void write_packet(std::vector<uint8_t> &&buffer)
+    void write_packet(boost::asio::const_buffer buffer)
     {
+        std::vector<uint8_t> copy_buffer;
+        copy_buffer.resize(buffer.size());
+        boost::asio::buffer_copy(boost::asio::buffer(copy_buffer), buffer);
+
         bool write_in_process = !write_tun_deque_.empty();
-        write_tun_deque_.push_back(std::move(buffer));
+        write_tun_deque_.push_back(copy_buffer);
         if (write_in_process)
             return;
         boost::asio::co_spawn(get_io_context(), write_tuntap_packet(), boost::asio::detached);
@@ -61,8 +62,7 @@ private:
         while (!write_tun_deque_.empty()) {
             const auto &buffer = write_tun_deque_.front();
             boost::system::error_code ec;
-            auto bytes = co_await device_.async_write_some(boost::asio::buffer(buffer),
-                                                           net_awaitable[ec]);
+            auto bytes = co_await device_.async_write_some(boost::asio::buffer(buffer), ec);
             if (ec) {
                 spdlog::warn("Write IP Packet to tuntap Device Failed: {0}", ec.message());
                 co_return;

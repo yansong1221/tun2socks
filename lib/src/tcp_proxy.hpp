@@ -258,21 +258,21 @@ public:
         }
     }
 
-    void write_packet(tcp_packet::tcp_flags flags, std::vector<uint8_t> &&payload = {})
+    void write_packet(tcp_packet::tcp_flags flags, boost::asio::const_buffer payload = {})
     {
-        return write_packet(flags, server_seq_num_, client_seq_num_, std::move(payload));
+        return write_packet(flags, server_seq_num_, client_seq_num_, payload);
     }
     void write_packet(tcp_packet::tcp_flags flags,
                       uint32_t seq_num,
                       uint32_t ack_num,
-                      std::vector<uint8_t> &&payload = {})
+                      boost::asio::const_buffer payload = {})
     {
         tcp_packet::header header_data;
         header_data.seq_num = seq_num;
         header_data.ack_num = ack_num;
         header_data.flags = flags;
 
-        tcp_packet tcp_pack(remote_endpoint_pair_, header_data, std::move(payload));
+        tcp_packet tcp_pack(remote_endpoint_pair_, header_data, payload);
         tun2socks_.write_tun_packet(tcp_pack);
     }
 
@@ -319,11 +319,12 @@ private:
                 co_return;
 
             boost::system::error_code ec;
-            std::vector<uint8_t> read_buffer;
-            read_buffer.resize(std::min<uint16_t>(0x0FFF, client_window_size_));
 
-            auto bytes = co_await socket_->async_read_some(boost::asio::buffer(read_buffer),
-                                                           net_awaitable[ec]);
+            boost::asio::streambuf read_buffer;
+            auto bytes = co_await socket_
+                             ->async_read_some(read_buffer.prepare(
+                                                   std::min<uint16_t>(0x0FFF, client_window_size_)),
+                                               net_awaitable[ec]);
             if (ec) {
                 //代理远程主动关闭
                 if (state_ == tcp_state::ts_established) {
@@ -335,13 +336,13 @@ private:
                 }
                 co_return;
             }
-            read_buffer.resize(bytes);
+            read_buffer.commit(bytes);
 
             tcp_packet::tcp_flags flags;
             flags.flag.ack = true;
             flags.flag.psh = true;
 
-            write_packet(flags, std::move(read_buffer));
+            write_packet(flags, read_buffer.data());
 
             server_seq_num_ += bytes;
 
