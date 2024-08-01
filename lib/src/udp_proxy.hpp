@@ -25,21 +25,22 @@ public:
 
     void on_udp_packet(const transport_layer::udp_packet &pack)
     {
-        std::vector<uint8_t> buffer;
-        buffer.resize(pack.payload().size());
-        boost::asio::buffer_copy(boost::asio::buffer(buffer), pack.payload());
-        bool write_in_process = !send_buffer_.empty();
-        send_buffer_.push_back(std::move(buffer));
+        return;
+        ioc_.post([=]() {
 
-        reset_timeout_timer();
+            bool write_in_process = !send_buffer_.empty();
+            send_buffer_.push_back(pack.payload_vec());
 
-        if (!socket_)
-            return;
+            reset_timeout_timer();
 
-        if (write_in_process)
-            return;
+            if (!socket_)
+                return;
 
-        boost::asio::co_spawn(ioc_, write_to_proxy(), boost::asio::detached);
+            if (write_in_process)
+                return;
+
+            boost::asio::co_spawn(ioc_, write_to_proxy(), boost::asio::detached);
+        });
     }
 
 private:
@@ -75,7 +76,9 @@ private:
             reset_timeout_timer();
 
             boost::system::error_code ec;
-            auto bytes = co_await socket_->async_receive_from(read_buffer.prepare(0x0FFF),
+            std::vector<uint8_t> read_buffer(0x0FFF, 0);
+
+            auto bytes = co_await socket_->async_receive_from(boost::asio::buffer(read_buffer),
                                                               proxy_endpoint_,
                                                               net_awaitable[ec]);
             if (ec) {
@@ -86,13 +89,10 @@ private:
                 do_close();
                 co_return;
             }
+            read_buffer.resize(bytes);
 
-            read_buffer.commit(bytes);
-
-            transport_layer::udp_packet pack(remote_endpoint_pair_, read_buffer.data());
+            transport_layer::udp_packet pack(remote_endpoint_pair_, std::move(read_buffer));
             tun2socks_.write_tun_packet(pack);
-
-            read_buffer.consume(bytes);
         }
     }
     void do_close()

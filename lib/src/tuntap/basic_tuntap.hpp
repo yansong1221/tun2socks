@@ -1,4 +1,5 @@
 #pragma once
+#include "tuntap/buffer.h"
 #include <boost/asio.hpp>
 #include <deque>
 
@@ -29,13 +30,13 @@ public:
     inline void open(const tun_parameter &param) { device_.open(param); }
     inline void close() { device_.close(); }
 
-    auto get_executor() noexcept { return device_.get_executor(); }
+    boost::asio::io_context &get_io_context() noexcept { return device_.get_io_context(); }
 
-    template<typename MutableBufferSequence,
-             BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, std::size_t)) ReadToken>
-    auto async_read_some(const MutableBufferSequence &buffers, ReadToken &&handler)
+    template<BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, recv_buffer_ptr))
+                 ReadToken>
+    auto async_read_some(ReadToken &&handler)
     {
-        return device_.async_read_some(buffers, handler);
+        return device_.async_read_some(handler);
     }
     template<typename ConstBufferSequence,
              BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, std::size_t))
@@ -47,23 +48,16 @@ public:
 
     void write_packet(std::vector<uint8_t> &&buffer)
     {
-        std::unique_lock<std::mutex> lck(write_lock_);
-
         bool write_in_process = !write_tun_deque_.empty();
         write_tun_deque_.push_back(std::move(buffer));
         if (write_in_process)
             return;
-        boost::asio::co_spawn(device_.get_io_context(),
-                              write_tuntap_packet(),
-                              boost::asio::detached);
+        boost::asio::co_spawn(get_io_context(), write_tuntap_packet(), boost::asio::detached);
     }
 
 private:
     boost::asio::awaitable<void> write_tuntap_packet()
     {
-        co_await boost::asio::post(co_await boost::asio::this_coro::executor,
-                                   boost::asio::use_awaitable);
-
         while (!write_tun_deque_.empty()) {
             const auto &buffer = write_tun_deque_.front();
             boost::system::error_code ec;

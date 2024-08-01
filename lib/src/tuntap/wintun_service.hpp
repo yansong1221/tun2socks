@@ -7,6 +7,7 @@
 #include <boost/asio/windows/object_handle.hpp>
 
 namespace tuntap {
+
 class wintun_service : public boost::asio::detail::service_base<wintun_service>
 {
 public:
@@ -32,36 +33,30 @@ public:
         receive_event_.close(ec);
     }
 
-    template<typename MutableBufferSequence,
-             BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, std::size_t)) ReadToken>
-    auto async_read_some(const MutableBufferSequence &buffers, ReadToken &&handler)
+    template<BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, recv_buffer_ptr))
+                 ReadToken>
+    auto async_read_some(ReadToken &&handler)
     {
-        return boost::asio::async_initiate<ReadToken, void(boost::system::error_code, std::size_t)>(
-            [this](auto &&handler, auto &&buffers) {
-                boost::asio::post(
-                    this->get_io_context(),
-                    [this, handler = std::move(handler), buffers = std::move(buffers)]() mutable {
-                        boost::system::error_code read_error;
-                        auto bytes_transferred = wintun_session_->receive_packet(buffers,
-                                                                                 read_error);
-                        if (read_error || bytes_transferred != 0) {
-                            handler(read_error, bytes_transferred);
-                            return;
-                        }
+        return boost::asio::async_initiate<ReadToken,
+                                           void(boost::system::error_code, recv_buffer_ptr)>(
+            [this](auto &&handler) {
+                boost::system::error_code read_error;
+                auto buffer = wintun_session_->receive_packet(read_error);
+                if (read_error || buffer) {
+                    handler(read_error, buffer);
+                    return;
+                }
 
-                        receive_event_.async_wait(
-                            [this, handler = std::move(handler), buffers = std::move(buffers)](
-                                const boost::system::error_code &ec) mutable {
-                                if (ec) {
-                                    handler(ec, 0);
-                                    return;
-                                }
-                                this->async_read_some(buffers, handler);
-                            });
-                    });
+                receive_event_.async_wait([this, handler = std::move(handler)](
+                                              const boost::system::error_code &ec) mutable {
+                    if (ec) {
+                        handler(ec, nullptr);
+                        return;
+                    }
+                    this->async_read_some(handler);
+                });
             },
-            handler,
-            buffers);
+            handler);
     }
     template<typename ConstBufferSequence,
              BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code, std::size_t))

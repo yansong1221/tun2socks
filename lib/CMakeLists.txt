@@ -22,6 +22,7 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_enums.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_error_code.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_io.hpp
 
+${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/buffer.h
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/tuntap.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/basic_tuntap.hpp
 

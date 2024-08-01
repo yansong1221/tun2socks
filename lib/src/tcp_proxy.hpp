@@ -101,13 +101,15 @@ public:
         , tun2socks_(_tun2socks)
         , local_endpoint_pair_(endpoint_pair)
         , remote_endpoint_pair_(endpoint_pair.swap())
+
     {
         tun_sending_buffer_ = std::make_unique<boost::asio::streambuf>();
         tun_wait_buffer_ = std::make_unique<boost::asio::streambuf>();
     }
     ~tcp_proxy() { spdlog::info("TCP断开连接: {0}", local_endpoint_pair_.to_string()); }
 
-    void on_tcp_packet(const tcp_packet &packet)
+    void on_tcp_packet(const tcp_packet &packet) { this->__on_tcp_packet(packet); }
+    void __on_tcp_packet(const tcp_packet &packet)
     {
         auto flags = packet.header_data().flags;
         auto seq_num = packet.header_data().seq_num;
@@ -256,22 +258,21 @@ public:
         }
     }
 
-    void write_packet(tcp_packet::tcp_flags flags,
-                      const boost::asio::const_buffer &payload = boost::asio::const_buffer())
+    void write_packet(tcp_packet::tcp_flags flags, std::vector<uint8_t> &&payload = {})
     {
-        return write_packet(flags, server_seq_num_, client_seq_num_, payload);
+        return write_packet(flags, server_seq_num_, client_seq_num_, std::move(payload));
     }
     void write_packet(tcp_packet::tcp_flags flags,
                       uint32_t seq_num,
                       uint32_t ack_num,
-                      const boost::asio::const_buffer &payload = boost::asio::const_buffer())
+                      std::vector<uint8_t> &&payload = {})
     {
         tcp_packet::header header_data;
         header_data.seq_num = seq_num;
         header_data.ack_num = ack_num;
         header_data.flags = flags;
 
-        tcp_packet tcp_pack(remote_endpoint_pair_, header_data, payload);
+        tcp_packet tcp_pack(remote_endpoint_pair_, header_data, std::move(payload));
         tun2socks_.write_tun_packet(tcp_pack);
     }
 
@@ -312,18 +313,17 @@ private:
     boost::asio::awaitable<void> read_remote_data()
     {
         auto self = shared_from_this();
-        boost::asio::streambuf read_buffer;
 
         for (;;) {
             if (client_window_size_ == 0)
                 co_return;
 
             boost::system::error_code ec;
+            std::vector<uint8_t> read_buffer;
+            read_buffer.resize(std::min<uint16_t>(0x0FFF, client_window_size_));
 
-            auto bytes = co_await socket_
-                             ->async_read_some(read_buffer.prepare(
-                                                   std::min<uint16_t>(0x0FFF, client_window_size_)),
-                                               net_awaitable[ec]);
+            auto bytes = co_await socket_->async_read_some(boost::asio::buffer(read_buffer),
+                                                           net_awaitable[ec]);
             if (ec) {
                 //代理远程主动关闭
                 if (state_ == tcp_state::ts_established) {
@@ -335,16 +335,14 @@ private:
                 }
                 co_return;
             }
-
-            read_buffer.commit(bytes);
+            read_buffer.resize(bytes);
 
             tcp_packet::tcp_flags flags;
             flags.flag.ack = true;
             flags.flag.psh = true;
 
-            write_packet(flags, read_buffer.data());
+            write_packet(flags, std::move(read_buffer));
 
-            read_buffer.consume(bytes);
             server_seq_num_ += bytes;
 
             send_ack_timer_.cancel(ec);
@@ -381,20 +379,6 @@ private:
             return;
 
         client_seq_num_ += (uint32_t) buffer.size();
-
-        //auto now = std::chrono::steady_clock::now();
-
-        //if (!is_delay_sendding_) {
-        //    is_delay_sendding_ = true;
-        //    send_ack_timer_.expires_from_now(std::chrono::milliseconds(200));
-        //    send_ack_timer_.async_wait(
-        //        [this, self = shared_from_this()](const boost::system::error_code &ec) {
-        //            is_delay_sendding_ = false;
-        //            if (ec)
-        //                return;
-        //            send_ack();
-        //        });
-        //}
         send_ack();
 
         boost::asio::buffer_copy(tun_wait_buffer_->prepare(buffer.size()), buffer);
