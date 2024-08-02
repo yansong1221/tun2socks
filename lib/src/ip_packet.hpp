@@ -1,6 +1,7 @@
 #pragma once
 #include "address_pair.hpp"
 #include "checksum.hpp"
+#include "tuntap/basic_tuntap.hpp"
 #include <boost/asio.hpp>
 #include <optional>
 #include <spdlog/spdlog.h>
@@ -55,36 +56,40 @@ struct alignas(4) ipv6_header
 
 } // namespace details
 
+template<typename RefConstBuffer>
 class ip_packet
 {
 public:
+public:
+    using ref_buffer_type = typename RefConstBuffer;
+
     ip_packet(const network_layer::address_pair_type &address_pair,
               uint8_t protocol,
-              const boost::asio::const_buffer &payload_data)
-        : address_pair_(address_pair)
+              const ref_buffer_type &payload_buffer)
+        : payload_buffer_(payload_buffer)
+        , address_pair_(address_pair)
         , protocol_(protocol)
-        , payload_data_(payload_data)
     {}
 
     const network_layer::address_pair_type &address_pair() const { return address_pair_; }
 
     uint8_t next_protocol() const { return protocol_; }
-    boost::asio::const_buffer payload_data() const { return payload_data_; }
 
     std::size_t raw_packet_size() const
     {
         switch (address_pair_.ip_version()) {
         case 4:
-            return sizeof(details::ipv4_header) + boost::asio::buffer_size(payload_data());
+            return sizeof(details::ipv4_header) + boost::asio::buffer_size(payload());
         case 6:
-            return sizeof(details::ipv6_header) + boost::asio::buffer_size(payload_data());
+            return sizeof(details::ipv6_header) + boost::asio::buffer_size(payload());
         }
         return 0;
     }
+    const ref_buffer_type &payload() const { return payload_buffer_; }
 
     std::size_t make_packet(boost::asio::mutable_buffer buffer) const
     {
-        auto payload = this->payload_data();
+        auto payload_data = this->payload();
 
         switch (address_pair_.ip_version()) {
         case 4: {
@@ -93,7 +98,7 @@ public:
             constexpr uint8_t ihl = header_len / 4;
             static std::atomic_uint16_t index = 0;
 
-            uint16_t tot_len = header_len + (uint16_t) payload.size();
+            uint16_t tot_len = raw_packet_size();
 
             memset(buffer.data(), 0, tot_len);
 
@@ -110,15 +115,15 @@ public:
             header->check = checksum::checksum((const uint8_t *) (header), header_len);
 
             buffer += header_len;
-            boost::asio::buffer_copy(buffer, payload);
+            boost::asio::buffer_copy(buffer, payload_data);
             return tot_len;
 
         } break;
         case 6: {
             constexpr auto header_len = sizeof(details::ipv6_header);
 
-            auto payload_len = (uint16_t) payload.size();
-            uint16_t tot_len = header_len + (uint16_t) payload.size();
+            auto payload_len = (uint16_t) payload_data.size();
+            uint16_t tot_len = raw_packet_size();
 
             auto src_addr_bytes = address_pair_.src.to_v6().to_bytes();
             auto dst_addr_bytes = address_pair_.dest.to_v6().to_bytes();
@@ -135,7 +140,7 @@ public:
             memcpy(header->dest_addr, dst_addr_bytes.data(), sizeof(header->dest_addr));
 
             buffer += header_len;
-            boost::asio::buffer_copy(buffer, payload);
+            boost::asio::buffer_copy(buffer, payload_data);
             return tot_len;
         } break;
         default:
@@ -143,8 +148,71 @@ public:
         }
         return 0;
     }
-    template<typename ConstBufferSequence>
-    static std::unique_ptr<ip_packet> from_packet(ConstBufferSequence &&buffers)
+
+    static std::size_t ip_header_len(const network_layer::address_pair_type &address_pair)
+    {
+        switch (address_pair.ip_version()) {
+        case 4:
+            return sizeof(details::ipv4_header);
+        case 6:
+            return sizeof(details::ipv6_header);
+        }
+        return 0;
+    }
+
+    template<typename MutableBufferSequence>
+    static void make_ip_header_packet(MutableBufferSequence &buffer,
+                                      const network_layer::address_pair_type &address_pair,
+                                      uint8_t protocol,
+                                      uint16_t payload_len)
+    {
+        switch (address_pair.ip_version()) {
+        case 4: {
+            constexpr auto header_len = sizeof(details::ipv4_header);
+
+            uint16_t tot_len = header_len + payload_len;
+
+            constexpr uint8_t ihl = header_len / 4;
+            static std::atomic_uint16_t index = 0;
+
+            auto header = boost::asio::buffer_cast<details::ipv4_header *>(buffer);
+            memset(header, 0, header_len);
+
+            header->ihl = ihl;
+            header->version = 4;
+            header->tot_len = ::htons(tot_len);
+            header->id = ::htons(index++);
+            header->ttl = 0x30;
+            header->protocol = protocol;
+            header->saddr = ::htonl(address_pair.src.to_v4().to_ulong());
+            header->daddr = ::htonl(address_pair.dest.to_v4().to_ulong());
+            header->check = checksum::checksum((const uint8_t *) (header), header_len);
+
+        } break;
+        case 6: {
+            constexpr auto header_len = sizeof(details::ipv6_header);
+
+            auto src_addr_bytes = address_pair.src.to_v6().to_bytes();
+            auto dst_addr_bytes = address_pair.dest.to_v6().to_bytes();
+
+            auto header = boost::asio::buffer_cast<details::ipv6_header *>(buffer);
+            memset(header, 0, header_len);
+
+            header->version_traffic_flow = ::htonl(make_version_traffic_flow(6, 0, 0));
+            header->payload_len = ::htons(payload_len);
+            header->next_header = protocol;
+            header->hop_limit = 0x30;
+
+            memcpy(header->src_addr, src_addr_bytes.data(), sizeof(header->src_addr));
+            memcpy(header->dest_addr, dst_addr_bytes.data(), sizeof(header->dest_addr));
+
+        } break;
+        default:
+            break;
+        }
+        return 0;
+    }
+    static std::unique_ptr<ip_packet<RefConstBuffer>> from_recv_buffer(RefConstBuffer buffers)
     {
         auto buf = boost::asio::buffer_cast<const uint8_t *>(buffers);
         auto len = boost::asio::buffer_size(buffers);
@@ -184,7 +252,7 @@ public:
 
             buffers += header_len;
 
-            return std::make_unique<ip_packet>(addr_pair, header->protocol, buffers);
+            return std::make_unique<ip_packet<RefConstBuffer>>(addr_pair, header->protocol, buffers);
         } break;
         case 6: {
             if (len < sizeof(details::ipv6_header)) {
@@ -213,7 +281,9 @@ public:
                          header->next_header);
 
             buffers += sizeof(details::ipv6_header);
-            return std::make_unique<ip_packet>(addr_pair, header->next_header, buffers);
+            return std::make_unique<ip_packet<RefConstBuffer>>(addr_pair,
+                                                               header->next_header,
+                                                               buffers);
         } break;
         default:
             break;
@@ -233,37 +303,10 @@ private:
 private:
     network_layer::address_pair_type address_pair_;
     uint8_t protocol_;
-    boost::asio::const_buffer payload_data_;
+    ref_buffer_type payload_buffer_;
 };
 
-//template<typename Allocator, typename ConstBufferSequence>
-//void make_icmp_packet(boost::asio::basic_streambuf<Allocator> &buffer,
-//                      uint8_t type,
-//                      uint8_t code,
-//                      uint16_t identifier,
-//                      uint16_t sequenceNumber,
-//                      const ConstBufferSequence &payload)
-//{
-//    constexpr auto header_len = sizeof(details::icmp_header);
-//    auto payload_len = boost::asio::buffer_size(payload);
-//
-//    auto header_buffer = buffer.prepare(header_len);
-//    memset(header_buffer.data(), 0, header_buffer.size());
-//
-//    auto header = boost::asio::buffer_cast<details::icmp_header *>(header_buffer);
-//    header->type = type;
-//    header->code = code;
-//    header->identifier = ::htons(identifier);
-//    header->sequenceNumber = ::htons(sequenceNumber);
-//    header->checksum = details::ip_checksum((const uint8_t *) (header), header_len);
-//
-//    buffer.commit(header_len);
-//
-//    if (payload_len != 0) {
-//        auto payload_buffer = buffer.prepare(payload_len);
-//        boost::asio::buffer_copy(payload_buffer, payload);
-//        buffer.commit(payload_len);
-//    }
-//}
+using recv_ip_packet = ip_packet<tuntap::recv_ref_buffer>;
+using send_ip_packet = ip_packet<tuntap::send_ref_buffer>;
 
 } // namespace network_layer

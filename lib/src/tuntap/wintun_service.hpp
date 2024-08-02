@@ -31,18 +31,19 @@ public:
         boost::system::error_code ec;
         receive_event_.close(ec);
     }
-
-    boost::asio::awaitable<recv_buffer_ptr> async_read_some(boost::system::error_code &ec)
+    template<typename MutableBufferSequence>
+    boost::asio::awaitable<std::size_t> async_read_some(MutableBufferSequence &buffer,
+                                                        boost::system::error_code &ec)
     {
         co_await boost::asio::post(this->get_io_context(), boost::asio::use_awaitable);
 
         for (;;) {
-            auto buffer = wintun_session_->receive_packet(ec);
-            if (ec || buffer)
+            auto bytes = wintun_session_->receive_packet(buffer, ec);
+            if (ec || bytes != 0)
                 co_return buffer;
             co_await receive_event_.async_wait(net_awaitable[ec]);
             if (ec)
-                co_return nullptr;
+                co_return 0;
         }
     }
     template<typename ConstBufferSequence>

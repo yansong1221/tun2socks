@@ -21,11 +21,13 @@ struct alignas(4) tcp_header
 };
 } // namespace details
 
+template<typename RefConstBuffer>
 class tcp_packet
 {
 public:
-    constexpr static uint8_t protocol = 0x06;
+    using ref_buffer_type = typename RefConstBuffer;
 
+    constexpr static uint8_t protocol = 0x06;
     union tcp_flags {
         struct unamed_struct
         {
@@ -52,17 +54,16 @@ public:
 public:
     explicit tcp_packet(const tcp_endpoint_pair &_endpoint_pair,
                         const tcp_packet::header &header_data,
-                        const boost::asio::const_buffer &payload = boost::asio::const_buffer())
-        : endpoint_pair_(_endpoint_pair)
+                        const ref_buffer_type &payload_buffer)
+        : payload_buffer_(payload_buffer)
+        , endpoint_pair_(_endpoint_pair)
         , header_data_(header_data)
-        , payload_(payload)
 
     {}
 
     const tcp_endpoint_pair &endpoint_pair() const { return endpoint_pair_; }
-    boost::asio::const_buffer payload() const { return payload_; }
-
     const tcp_packet::header &header_data() const { return header_data_; }
+    const ref_buffer_type &payload() const { return payload_buffer_; }
 
     std::size_t raw_packet_size() const
     {
@@ -90,9 +91,10 @@ public:
         return length;
     }
 
-    inline static std::unique_ptr<tcp_packet> from_ip_packet(const network_layer::ip_packet &ip_pack)
+    inline static std::unique_ptr<tcp_packet<ref_buffer_type>> from_ip_packet(
+        const network_layer::ip_packet<ref_buffer_type> &ip_pack)
     {
-        auto buffer = ip_pack.payload_data();
+        auto buffer = ip_pack.payload();
 
         if (buffer.size() < sizeof(details::tcp_header)) {
             SPDLOG_WARN("Received packet without room for a tcp header");
@@ -132,7 +134,7 @@ public:
         header_data.window_size = ntohs(header->window_size);
         header_data.flags.data = header->flags;
 
-        return std::make_unique<tcp_packet>(endpoint_pair, header_data, buffer);
+        return std::make_unique<tcp_packet<ref_buffer_type>>(endpoint_pair, header_data, buffer);
     }
 
 private:
@@ -193,6 +195,10 @@ private:
 private:
     header header_data_;
     tcp_endpoint_pair endpoint_pair_;
-    boost::asio::const_buffer payload_;
+    ref_buffer_type payload_buffer_;
 };
+
+using recv_tcp_packet = tcp_packet<tuntap::recv_ref_buffer>;
+using send_tcp_packet = tcp_packet<tuntap::send_ref_buffer>;
+
 } // namespace transport_layer

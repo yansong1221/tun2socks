@@ -3,6 +3,7 @@
 #include "endpoint_pair.hpp"
 #include "ip_packet.hpp"
 #include <boost/asio.hpp>
+
 namespace transport_layer {
 
 namespace details {
@@ -16,18 +17,22 @@ struct alignas(4) udp_header
 };
 
 } // namespace details
+template<typename RefConstBuffer>
 class udp_packet
 {
 public:
+    using ref_buffer_type = typename RefConstBuffer;
+
     constexpr static uint8_t protocol = 0x11;
 
 public:
-    udp_packet(const udp_endpoint_pair &endpoint_pair, const boost::asio::const_buffer &payload)
-        : endpoint_pair_(endpoint_pair)
-        , payload_(payload)
+    udp_packet(const udp_endpoint_pair &endpoint_pair, const ref_buffer_type &payload_buffer)
+        : payload_buffer_(payload_buffer)
+        , endpoint_pair_(endpoint_pair)
     {}
     inline const udp_endpoint_pair &endpoint_pair() const { return endpoint_pair_; }
-    inline boost::asio::const_buffer payload() const { return payload_; }
+
+    const ref_buffer_type &payload() const { return payload_buffer_; }
 
     std::size_t raw_packet_size() const
     {
@@ -37,7 +42,7 @@ public:
     std::size_t make_packet(boost::asio::mutable_buffer buffers) const
     {
         uint16_t length = raw_packet_size();
-        auto paload_data = payload();
+        auto paload_data = this->payload();
 
         memset(buffers.data(), 0, length);
 
@@ -50,25 +55,13 @@ public:
         memcpy(header + 1, paload_data.data(), paload_data.size());
         return length;
     }
-
-    template<typename Allocator>
-    void make_ip_packet(boost::asio::basic_streambuf<Allocator> &buffers)
-    {
-        boost::asio::streambuf payload;
-        make_packet(payload);
-
-        network_layer::ip_packet ip_pack(endpoint_pair_.to_address_pair(),
-                                         udp_packet::protocol,
-                                         payload.data());
-        ip_pack.make_packet(buffers);
-    }
-
-    inline static std::unique_ptr<udp_packet> from_ip_packet(const network_layer::ip_packet &ip_pack)
+    inline static std::unique_ptr<udp_packet<ref_buffer_type>> from_ip_packet(
+        const network_layer::ip_packet<ref_buffer_type> &ip_pack)
     {
         if (ip_pack.next_protocol() != udp_packet::protocol)
             return nullptr;
 
-        auto buffer = ip_pack.payload_data();
+        auto buffer = ip_pack.payload();
         if (buffer.size() < sizeof(details::udp_header)) {
             SPDLOG_WARN("Received packet without room for an upd header");
             return nullptr;
@@ -98,8 +91,9 @@ public:
                      ip_pack.address_pair().ip_version(),
                      point_pair.to_string());
 
-        return std::make_unique<udp_packet>(point_pair,
-                                            boost::asio::const_buffer(header + 1, payload_len));
+        buffer += sizeof(details::udp_header);
+
+        return std::make_unique<udp_packet<ref_buffer_type>>(point_pair, buffer);
     }
 
 private:
@@ -161,7 +155,10 @@ private:
 
 private:
     udp_endpoint_pair endpoint_pair_;
-    boost::asio::const_buffer payload_;
+    ref_buffer_type payload_buffer_;
 };
+
+using recv_udp_packet = udp_packet<tuntap::recv_ref_buffer>;
+using send_udp_packet = udp_packet<tuntap::send_ref_buffer>;
 
 } // namespace transport_layer

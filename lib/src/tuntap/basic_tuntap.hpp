@@ -1,5 +1,7 @@
 #pragma once
+#include "use_awaitable.hpp"
 #include <boost/asio.hpp>
+#include <boost/shared_array.hpp>
 #include <deque>
 
 namespace tuntap {
@@ -17,14 +19,17 @@ struct tun_parameter
     std::optional<address> ipv6;
 };
 
-class recv_buffer
+using send_buffer_ptr = std::shared_ptr<boost::asio::streambuf>;
+
+class ref_buffer : public boost::asio::const_buffer
 {
 public:
-    virtual ~recv_buffer() = default;
-    virtual boost::asio::const_buffer data() const = 0;
+    ref_buffer() = default;
+    ref_buffer(send_buffer_ptr p)
+    {}
+private:
+    boost::shared_array<uint8_t> p_;
 };
-
-using recv_buffer_ptr = std::shared_ptr<recv_buffer>;
 
 template<typename Device>
 class basic_tuntap
@@ -40,9 +45,11 @@ public:
 
     auto get_executor() noexcept { return device_.get_executor(); }
 
-    boost::asio::awaitable<recv_buffer_ptr> async_read_some(boost::system::error_code &ec)
+    template<typename MutableBufferSequence>
+    boost::asio::awaitable<std::size_t> async_read_some(MutableBufferSequence &buffers,
+                                                        boost::system::error_code &ec)
     {
-        return device_.async_read_some(ec);
+        return device_.async_read_some(buffers, ec);
     }
     template<typename ConstBufferSequence>
     boost::asio::awaitable<std::size_t> async_write_some(const ConstBufferSequence &buffers,
@@ -51,12 +58,10 @@ public:
         return device_.async_write_some(buffers, ec);
     }
 
-    void write_packet(std::vector<uint8_t> &&buffer)
+    void write_packet(const send_ref_buffer &buffer)
     {
-        std::unique_lock<std::mutex> lck(write_lock_);
-
         bool write_in_process = !write_tun_deque_.empty();
-        write_tun_deque_.push_back(std::move(buffer));
+        write_tun_deque_.push_back(buffer);
         if (write_in_process)
             return;
         boost::asio::co_spawn(device_.get_io_context(),
@@ -73,7 +78,7 @@ private:
         while (!write_tun_deque_.empty()) {
             const auto &buffer = write_tun_deque_.front();
             boost::system::error_code ec;
-            auto bytes = co_await device_.async_write_some(boost::asio::buffer(buffer), ec);
+            auto bytes = co_await device_.async_write_some(buffer, ec);
             if (ec) {
                 spdlog::warn("Write IP Packet to tuntap Device Failed: {0}", ec.message());
                 co_return;
@@ -94,6 +99,6 @@ private:
 private:
     device_type &device_;
     std::mutex write_lock_;
-    std::deque<std::vector<uint8_t>> write_tun_deque_;
+    std::deque<send_ref_buffer> write_tun_deque_;
 };
 } // namespace tuntap

@@ -492,34 +492,6 @@ private:
 class session : public std::enable_shared_from_this<session>
 {
 public:
-    class wintun_recv_buffer : public tuntap::recv_buffer
-    {
-    public:
-        wintun_recv_buffer(std::shared_ptr<session> _session, BYTE *packet, DWORD size)
-            : session_(_session)
-            , packet_(packet)
-            , size_(size)
-        {}
-        ~wintun_recv_buffer() { session_->release_receive_packet(packet_); }
-
-    public:
-        inline boost::asio::const_buffer data() const override
-        {
-            return boost::asio::const_buffer(packet_, size_);
-        }
-
-    private:
-        std::shared_ptr<session> session_;
-        BYTE *packet_;
-        DWORD size_;
-    };
-
-public:
-    inline void release_receive_packet(BYTE *packet)
-    {
-        adapter_->get_library()->WintunReleaseReceivePacket(wintun_session_, packet);
-    }
-
     session(std::shared_ptr<adapter> _adapter, WINTUN_SESSION_HANDLE _session)
         : adapter_(_adapter)
         , wintun_session_(_session)
@@ -530,30 +502,31 @@ public:
         return adapter_->get_library()->WintunGetReadWaitEvent(wintun_session_);
     }
 
-    inline std::shared_ptr<wintun_recv_buffer> receive_packet()
-    {
-        DWORD PacketSize;
-        BYTE *Packet = adapter_->get_library()->WintunReceivePacket(wintun_session_, &PacketSize);
-        if (Packet) {
-            return std::make_shared<wintun_recv_buffer>(shared_from_this(), Packet, PacketSize);
-        }
-        DWORD LastError = GetLastError();
-        if (LastError != ERROR_NO_MORE_ITEMS)
-            details::log_throw_system_error("Packet read failed", LastError);
-        return nullptr;
-    }
-    inline std::shared_ptr<wintun_recv_buffer> receive_packet(boost::system::error_code &ec)
+    template<typename MutableBufferSequence>
+    std::size_t receive_packet(MutableBufferSequence &buffer, boost::system::error_code &ec)
     {
         try {
-            return receive_packet();
+            DWORD PacketSize;
+            BYTE *Packet = adapter_->get_library()->WintunReceivePacket(wintun_session_,
+                                                                        &PacketSize);
+            if (Packet) {
+                boost::asio::buffer_copy(boost::asio::buffer(buffer),
+                                         boost::asio::const_buffer(Packet, PacketSize));
+                adapter_->get_library()->WintunReleaseReceivePacket(wintun_session_, Packet);
+                return PacketSize;
+            }
+            DWORD LastError = GetLastError();
+            if (LastError != ERROR_NO_MORE_ITEMS)
+                details::log_throw_system_error("Packet read failed", LastError);
 
         } catch (const boost::system::system_error &system_error) {
             ec = system_error.code();
-            return nullptr;
         }
+        return 0;
     }
+
     template<typename ConstBufferSequence>
-    inline void send_packets(const ConstBufferSequence &buffer)
+    std::size_t send_packets(const ConstBufferSequence &buffer, boost::system::error_code &ec)
     {
         DWORD send_size = (DWORD) boost::asio::buffer_size(buffer);
         if (send_size == 0)
@@ -563,19 +536,14 @@ public:
         if (Packet) {
             boost::asio::buffer_copy(boost::asio::mutable_buffer(Packet, send_size), buffer);
             adapter_->get_library()->WintunSendPacket(wintun_session_, Packet);
-            return;
+            return send_size;
         }
-        details::log_throw_last_system_error("Packet write failed");
-    }
-    template<typename ConstBufferSequence>
-    inline void send_packets(const ConstBufferSequence &buffer, boost::system::error_code &ec)
-    {
         try {
-            return send_packets(buffer);
-
+            details::log_throw_last_system_error("Packet write failed");
         } catch (const boost::system::system_error &system_error) {
             ec = system_error.code();
         }
+        return 0;
     }
 
 private:

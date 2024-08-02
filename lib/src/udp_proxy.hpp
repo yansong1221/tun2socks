@@ -7,7 +7,6 @@ class udp_proxy : public std::enable_shared_from_this<udp_proxy>
 {
 public:
     using ptr = std::shared_ptr<udp_proxy>;
-    using close_function = std::function<void(const transport_layer::udp_endpoint_pair &)>;
 
     explicit udp_proxy(boost::asio::io_context &ioc,
                        const transport_layer::udp_endpoint_pair &endpoint_pair,
@@ -23,13 +22,10 @@ public:
 public:
     void start() { boost::asio::co_spawn(ioc_, co_read_data(), boost::asio::detached); }
 
-    void on_udp_packet(const transport_layer::udp_packet &pack)
+    void on_udp_packet(const transport_layer::recv_udp_packet &pack)
     {
-        std::vector<uint8_t> buffer;
-        buffer.resize(pack.payload().size());
-        boost::asio::buffer_copy(boost::asio::buffer(buffer), pack.payload());
         bool write_in_process = !send_buffer_.empty();
-        send_buffer_.push_back(std::move(buffer));
+        send_buffer_.push_back(pack.payload());
 
         reset_timeout_timer();
 
@@ -70,12 +66,13 @@ private:
             do_close();
             co_return;
         }
-        boost::asio::streambuf read_buffer;
+
         for (;;) {
             reset_timeout_timer();
 
             boost::system::error_code ec;
-            auto bytes = co_await socket_->async_receive_from(read_buffer.prepare(0x0FFF),
+            auto read_buffer = std::make_shared<boost::asio::streambuf>();
+            auto bytes = co_await socket_->async_receive_from(read_buffer->prepare(0x0FFF),
                                                               proxy_endpoint_,
                                                               net_awaitable[ec]);
             if (ec) {
@@ -87,12 +84,12 @@ private:
                 co_return;
             }
 
-            read_buffer.commit(bytes);
+            read_buffer->commit(bytes);
 
-            transport_layer::udp_packet pack(remote_endpoint_pair_, read_buffer.data());
+            tuntap::send_ref_buffer buffer(read_buffer);
+
+            transport_layer::send_udp_packet pack(remote_endpoint_pair_, buffer);
             tun2socks_.write_tun_packet(pack);
-
-            read_buffer.consume(bytes);
         }
     }
     void do_close()
@@ -112,9 +109,7 @@ private:
         while (!send_buffer_.empty()) {
             boost::system::error_code ec;
             const auto &buffer = send_buffer_.front();
-            co_await socket_->async_send_to(boost::asio::buffer(buffer),
-                                            proxy_endpoint_,
-                                            net_awaitable[ec]);
+            co_await socket_->async_send_to(buffer, proxy_endpoint_, net_awaitable[ec]);
 
             if (ec) {
                 spdlog::warn("发送 UDP 数据失败: [{}]:{} {}",
@@ -136,7 +131,7 @@ private:
     std::chrono::seconds udp_timeout_seconds_ = std::chrono::seconds(60);
     boost::asio::steady_timer udp_timeout_timer_;
 
-    std::deque<std::vector<uint8_t>> send_buffer_;
+    std::deque<tuntap::recv_ref_buffer> send_buffer_;
 
     transport_layer::udp_endpoint_pair local_endpoint_pair_;
     transport_layer::udp_endpoint_pair remote_endpoint_pair_;
