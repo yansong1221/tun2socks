@@ -1,6 +1,5 @@
 #pragma once
 #include "interface.hpp"
-#include "io_context_pool.hpp"
 #include "ip_packet.hpp"
 #include "route/route.hpp"
 #include "tcp_packet.hpp"
@@ -13,8 +12,9 @@
 class ip_layer_stack : public abstract::tun2socks
 {
 public:
-    explicit ip_layer_stack()
-        : tuntap_(ioc_)
+    explicit ip_layer_stack(boost::asio::io_context &ioc)
+        : ioc_(ioc)
+        , tuntap_(ioc)
     {}
     void start()
     {
@@ -63,16 +63,12 @@ public:
             route::add_route_ipapi(info);
         }
 
-        boost::asio::co_spawn(tuntap_.get_io_context(), receive_ip_packet(), boost::asio::detached);
-
-        /*pool_.Start();
-        pool_.Wait();*/
-        ioc_.run();
+        boost::asio::co_spawn(ioc_, receive_ip_packet(), boost::asio::detached);
     }
 
-    void on_ip_packet(tuntap::recv_buffer_ptr buffer)
+    void on_ip_packet(const boost::asio::const_buffer &buffer)
     {
-        auto ip_pack = network_layer::ip_packet::from_packet(buffer->data());
+        auto ip_pack = network_layer::ip_packet::from_packet(boost::asio::buffer(buffer));
         if (!ip_pack)
             return;
 
@@ -90,16 +86,11 @@ public:
     boost::asio::awaitable<void> receive_ip_packet()
     {
         for (;;) {
-            try {
-                boost::system::error_code ec;
-                auto buffer = co_await tuntap_.async_read_some(ec);
-                if (ec)
-                    co_return;
-
-                this->on_ip_packet(buffer);
-            } catch (const std::exception &e) {
-                continue;
-            }
+            boost::system::error_code ec;
+            auto buffer = co_await tuntap_.async_read_some(ec);
+            if (ec)
+                co_return;
+            this->on_ip_packet(buffer->data());
         }
     };
 
@@ -115,7 +106,8 @@ public:
     void write_tun_packet(const transport_layer::tcp_packet &pack) override
     {
         boost::asio::streambuf payload;
-        pack.make_packet(payload);
+        pack.make_packet(payload.prepare(pack.raw_packet_size()));
+        payload.commit(pack.raw_packet_size());
 
         network_layer::ip_packet ip_pack(pack.endpoint_pair().to_address_pair(),
                                          transport_layer::tcp_packet::protocol,
@@ -125,21 +117,14 @@ public:
     void write_tun_packet(const transport_layer::udp_packet &pack) override
     {
         boost::asio::streambuf payload;
-        pack.make_packet(payload);
+        pack.make_packet(payload.prepare(pack.raw_packet_size()));
+        payload.commit(pack.raw_packet_size());
 
         network_layer::ip_packet ip_pack(pack.endpoint_pair().to_address_pair(),
                                          transport_layer::udp_packet::protocol,
                                          payload.data());
         write_ip_packet(ip_pack);
     }
-    void write_ip_packet(const network_layer::ip_packet &ip_pack)
-    {
-        boost::asio::streambuf payload;
-        ip_pack.make_packet(payload);
-
-        tuntap_.write_packet(payload.data());
-    }
-
     virtual boost::asio::awaitable<tcp_socket_ptr> create_proxy_socket(
         const transport_layer::tcp_endpoint_pair &endpoint_pair)
     {
@@ -252,6 +237,18 @@ public:
         }
         co_return socket;
     }
+    void write_ip_packet(const network_layer::ip_packet &ip_pack)
+    {
+        boost::asio::streambuf buffer;
+        ip_pack.make_packet(buffer.prepare(ip_pack.raw_packet_size()));
+        buffer.commit(ip_pack.raw_packet_size());
+
+        std::vector<uint8_t> copy_buffer;
+        copy_buffer.resize(buffer.size());
+        boost::asio::buffer_copy(boost::asio::buffer(copy_buffer), buffer.data());
+
+        tuntap_.write_packet(std::move(copy_buffer));
+    }
 
 private:
     template<typename Stream, typename InternetProtocol>
@@ -280,7 +277,7 @@ private:
             proxy->start();
             udp_proxy_map_[endpoint_pair] = proxy;
         }
-        proxy->on_udp_packet(std::move(*udp_pack));
+        proxy->on_udp_packet(*udp_pack);
     }
     void on_tcp_packet(const network_layer::ip_packet &ip_pack)
     {
@@ -299,8 +296,7 @@ private:
     }
 
 private:
-    //toys::pool::IOContextPool<1, 1> pool_;
-    boost::asio::io_context ioc_;
+    boost::asio::io_context &ioc_;
     tuntap::tuntap tuntap_;
 
     boost::asio::ip::address_v4 default_if_addr_v4_;

@@ -60,7 +60,7 @@ class ip_packet
 public:
     ip_packet(const network_layer::address_pair_type &address_pair,
               uint8_t protocol,
-              boost::asio::const_buffer payload_data)
+              const boost::asio::const_buffer &payload_data)
         : address_pair_(address_pair)
         , protocol_(protocol)
         , payload_data_(payload_data)
@@ -71,8 +71,21 @@ public:
     uint8_t next_protocol() const { return protocol_; }
     boost::asio::const_buffer payload_data() const { return payload_data_; }
 
-    void make_packet(boost::asio::streambuf &buffer) const
+    std::size_t raw_packet_size() const
     {
+        switch (address_pair_.ip_version()) {
+        case 4:
+            return sizeof(details::ipv4_header) + boost::asio::buffer_size(payload_data());
+        case 6:
+            return sizeof(details::ipv6_header) + boost::asio::buffer_size(payload_data());
+        }
+        return 0;
+    }
+
+    std::size_t make_packet(boost::asio::mutable_buffer buffer) const
+    {
+        auto payload = this->payload_data();
+
         switch (address_pair_.ip_version()) {
         case 4: {
             constexpr auto header_len = sizeof(details::ipv4_header);
@@ -80,12 +93,11 @@ public:
             constexpr uint8_t ihl = header_len / 4;
             static std::atomic_uint16_t index = 0;
 
-            uint16_t tot_len = header_len + (uint16_t) payload_data_.size();
+            uint16_t tot_len = header_len + (uint16_t) payload.size();
 
-            auto header_buffer = buffer.prepare(tot_len);
-            memset(header_buffer.data(), 0, tot_len);
+            memset(buffer.data(), 0, tot_len);
 
-            auto header = boost::asio::buffer_cast<details::ipv4_header *>(header_buffer);
+            auto header = boost::asio::buffer_cast<details::ipv4_header *>(buffer);
 
             header->ihl = ihl;
             header->version = 4;
@@ -95,27 +107,25 @@ public:
             header->protocol = protocol_;
             header->saddr = ::htonl(address_pair_.src.to_v4().to_ulong());
             header->daddr = ::htonl(address_pair_.dest.to_v4().to_ulong());
-
             header->check = checksum::checksum((const uint8_t *) (header), header_len);
-            memcpy(header + 1, payload_data_.data(), payload_data_.size());
 
-            buffer.commit(tot_len);
-
-            return;
+            buffer += header_len;
+            boost::asio::buffer_copy(buffer, payload);
+            return tot_len;
 
         } break;
         case 6: {
             constexpr auto header_len = sizeof(details::ipv6_header);
 
-            auto payload_len = (uint16_t) payload_data_.size();
+            auto payload_len = (uint16_t) payload.size();
+            uint16_t tot_len = header_len + (uint16_t) payload.size();
+
             auto src_addr_bytes = address_pair_.src.to_v6().to_bytes();
             auto dst_addr_bytes = address_pair_.dest.to_v6().to_bytes();
 
-            auto header_buffer = buffer.prepare(header_len + payload_len);
+            memset(buffer.data(), 0, tot_len);
 
-            auto header = boost::asio::buffer_cast<details::ipv6_header *>(header_buffer);
-            memset(header, 0, sizeof(details::ipv6_header));
-
+            auto header = boost::asio::buffer_cast<details::ipv6_header *>(buffer);
             header->version_traffic_flow = ::htonl(make_version_traffic_flow(6, 0, 0));
             header->payload_len = ::htons(payload_len);
             header->next_header = protocol_;
@@ -124,15 +134,14 @@ public:
             memcpy(header->src_addr, src_addr_bytes.data(), sizeof(header->src_addr));
             memcpy(header->dest_addr, dst_addr_bytes.data(), sizeof(header->dest_addr));
 
-            header_buffer += header_len;
-
-            boost::asio::buffer_copy(header_buffer, payload_data_);
-            buffer.commit(header_len + payload_len);
-            return;
+            buffer += header_len;
+            boost::asio::buffer_copy(buffer, payload);
+            return tot_len;
         } break;
         default:
             break;
         }
+        return 0;
     }
     template<typename ConstBufferSequence>
     static std::unique_ptr<ip_packet> from_packet(ConstBufferSequence &&buffers)
@@ -204,7 +213,6 @@ public:
                          header->next_header);
 
             buffers += sizeof(details::ipv6_header);
-
             return std::make_unique<ip_packet>(addr_pair, header->next_header, buffers);
         } break;
         default:

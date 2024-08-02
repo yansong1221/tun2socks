@@ -25,8 +25,11 @@ public:
 
     void on_udp_packet(const transport_layer::udp_packet &pack)
     {
+        std::vector<uint8_t> buffer;
+        buffer.resize(pack.payload().size());
+        boost::asio::buffer_copy(boost::asio::buffer(buffer), pack.payload());
         bool write_in_process = !send_buffer_.empty();
-        send_buffer_.push_back(pack.payload_vec());
+        send_buffer_.push_back(std::move(buffer));
 
         reset_timeout_timer();
 
@@ -72,9 +75,7 @@ private:
             reset_timeout_timer();
 
             boost::system::error_code ec;
-            std::vector<uint8_t> read_buffer(0x0FFF, 0);
-
-            auto bytes = co_await socket_->async_receive_from(boost::asio::buffer(read_buffer),
+            auto bytes = co_await socket_->async_receive_from(read_buffer.prepare(0x0FFF),
                                                               proxy_endpoint_,
                                                               net_awaitable[ec]);
             if (ec) {
@@ -85,10 +86,13 @@ private:
                 do_close();
                 co_return;
             }
-            read_buffer.resize(bytes);
 
-            transport_layer::udp_packet pack(remote_endpoint_pair_, std::move(read_buffer));
+            read_buffer.commit(bytes);
+
+            transport_layer::udp_packet pack(remote_endpoint_pair_, read_buffer.data());
             tun2socks_.write_tun_packet(pack);
+
+            read_buffer.consume(bytes);
         }
     }
     void do_close()

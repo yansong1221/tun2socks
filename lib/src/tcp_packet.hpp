@@ -52,7 +52,7 @@ public:
 public:
     explicit tcp_packet(const tcp_endpoint_pair &_endpoint_pair,
                         const tcp_packet::header &header_data,
-                        boost::asio::const_buffer payload)
+                        const boost::asio::const_buffer &payload = boost::asio::const_buffer())
         : endpoint_pair_(_endpoint_pair)
         , header_data_(header_data)
         , payload_(payload)
@@ -64,14 +64,19 @@ public:
 
     const tcp_packet::header &header_data() const { return header_data_; }
 
-    void make_packet(boost::asio::streambuf &buffers) const
+    std::size_t raw_packet_size() const
     {
-        uint16_t length = sizeof(details::tcp_header) + (uint16_t) payload_.size();
+        return sizeof(details::tcp_header) + boost::asio::buffer_size(payload());
+    }
 
-        auto header_buffer = buffers.prepare(length);
-        memset(header_buffer.data(), 0, length);
+    std::size_t make_packet(boost::asio::mutable_buffer buffers) const
+    {
+        uint16_t length = raw_packet_size();
+        auto payload_data = payload();
 
-        auto header = boost::asio::buffer_cast<details::tcp_header *>(header_buffer);
+        memset(buffers.data(), 0, length);
+
+        auto header = boost::asio::buffer_cast<details::tcp_header *>(buffers);
         header->src_port = ::htons(endpoint_pair_.src.port());
         header->dest_port = ::htons(endpoint_pair_.dest.port());
         header->seq_num = ::htonl(header_data_.seq_num);
@@ -79,11 +84,10 @@ public:
         header->data_offset = sizeof(details::tcp_header) / 4;
         header->flags = header_data_.flags.data;
         header->window_size = htons(header_data_.window_size);
-        header->checksum = checksum(header, endpoint_pair_.to_address_pair(), payload_);
-        memcpy(header + 1, payload_.data(), payload_.size());
+        header->checksum = checksum(header, endpoint_pair_.to_address_pair(), payload_data);
 
-        buffers.commit(length);
-        return;
+        memcpy(header + 1, payload_data.data(), payload_data.size());
+        return length;
     }
 
     inline static std::unique_ptr<tcp_packet> from_ip_packet(const network_layer::ip_packet &ip_pack)

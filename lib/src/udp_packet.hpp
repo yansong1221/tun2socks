@@ -22,32 +22,45 @@ public:
     constexpr static uint8_t protocol = 0x11;
 
 public:
-    udp_packet(const udp_endpoint_pair &endpoint_pair, const std::vector<uint8_t> &payload)
+    udp_packet(const udp_endpoint_pair &endpoint_pair, const boost::asio::const_buffer &payload)
         : endpoint_pair_(endpoint_pair)
         , payload_(payload)
     {}
     inline const udp_endpoint_pair &endpoint_pair() const { return endpoint_pair_; }
-    inline boost::asio::const_buffer payload() const { return boost::asio::buffer(payload_); }
-    const std::vector<uint8_t> &payload_vec() const { return payload_; }
+    inline boost::asio::const_buffer payload() const { return payload_; }
 
-    void make_packet(boost::asio::streambuf &buffers) const
+    std::size_t raw_packet_size() const
     {
-        uint16_t length = sizeof(details::udp_header) + (uint16_t) payload_.size();
+        return sizeof(details::udp_header) + boost::asio::buffer_size(payload());
+    }
 
-        auto header_buffer = buffers.prepare(length);
-        memset(header_buffer.data(), 0, length);
+    std::size_t make_packet(boost::asio::mutable_buffer buffers) const
+    {
+        uint16_t length = raw_packet_size();
+        auto paload_data = payload();
 
-        auto header = boost::asio::buffer_cast<details::udp_header *>(header_buffer);
+        memset(buffers.data(), 0, length);
+
+        auto header = boost::asio::buffer_cast<details::udp_header *>(buffers);
         header->src_port = ::htons(endpoint_pair_.src.port());
         header->dest_port = ::htons(endpoint_pair_.dest.port());
         header->length = ::htons(length);
-        header->checksum = checksum(header,
-                                    endpoint_pair_.to_address_pair(),
-                                    boost::asio::buffer(payload_));
+        header->checksum = checksum(header, endpoint_pair_.to_address_pair(), paload_data);
 
-        memcpy(header + 1, payload_.data(), payload_.size());
+        memcpy(header + 1, paload_data.data(), paload_data.size());
+        return length;
+    }
 
-        buffers.commit(length);
+    template<typename Allocator>
+    void make_ip_packet(boost::asio::basic_streambuf<Allocator> &buffers)
+    {
+        boost::asio::streambuf payload;
+        make_packet(payload);
+
+        network_layer::ip_packet ip_pack(endpoint_pair_.to_address_pair(),
+                                         udp_packet::protocol,
+                                         payload.data());
+        ip_pack.make_packet(buffers);
     }
 
     inline static std::unique_ptr<udp_packet> from_ip_packet(const network_layer::ip_packet &ip_pack)
@@ -67,9 +80,12 @@ public:
             SPDLOG_WARN("Received udp packet length error");
             return nullptr;
         }
-        buffer += sizeof(details::udp_header);
+        uint16_t payload_len = total_len - sizeof(details::udp_header);
 
-        if (checksum(header, ip_pack.address_pair(), buffer) != 0) {
+        if (checksum(header,
+                     ip_pack.address_pair(),
+                     boost::asio::const_buffer((const uint8_t *) (header + 1), payload_len))
+            != 0) {
             SPDLOG_WARN("Received IPv{0} udp packet Calculation checksum error",
                         ip_pack.address_pair().ip_version());
             return nullptr;
@@ -82,10 +98,8 @@ public:
                      ip_pack.address_pair().ip_version(),
                      point_pair.to_string());
 
-        std::vector<uint8_t> payload(buffer.size());
-        boost::asio::buffer_copy(boost::asio::buffer(payload), buffer);
-
-        return std::make_unique<udp_packet>(point_pair, std::move(payload));
+        return std::make_unique<udp_packet>(point_pair,
+                                            boost::asio::const_buffer(header + 1, payload_len));
     }
 
 private:
@@ -147,7 +161,7 @@ private:
 
 private:
     udp_endpoint_pair endpoint_pair_;
-    std::vector<uint8_t> payload_;
+    boost::asio::const_buffer payload_;
 };
 
 } // namespace transport_layer

@@ -101,15 +101,13 @@ public:
         , tun2socks_(_tun2socks)
         , local_endpoint_pair_(endpoint_pair)
         , remote_endpoint_pair_(endpoint_pair.swap())
-
     {
         tun_sending_buffer_ = std::make_unique<boost::asio::streambuf>();
         tun_wait_buffer_ = std::make_unique<boost::asio::streambuf>();
     }
     ~tcp_proxy() { spdlog::info("TCP断开连接: {0}", local_endpoint_pair_.to_string()); }
 
-    void on_tcp_packet(const tcp_packet &packet) { this->__on_tcp_packet(packet); }
-    void __on_tcp_packet(const tcp_packet &packet)
+    void on_tcp_packet(const tcp_packet &packet)
     {
         auto flags = packet.header_data().flags;
         auto seq_num = packet.header_data().seq_num;
@@ -258,14 +256,15 @@ public:
         }
     }
 
-    void write_packet(tcp_packet::tcp_flags flags, boost::asio::const_buffer payload = {})
+    void write_packet(tcp_packet::tcp_flags flags,
+                      const boost::asio::const_buffer &payload = boost::asio::const_buffer())
     {
         return write_packet(flags, server_seq_num_, client_seq_num_, payload);
     }
     void write_packet(tcp_packet::tcp_flags flags,
                       uint32_t seq_num,
                       uint32_t ack_num,
-                      boost::asio::const_buffer payload = {})
+                      const boost::asio::const_buffer &payload = boost::asio::const_buffer())
     {
         tcp_packet::header header_data;
         header_data.seq_num = seq_num;
@@ -313,6 +312,7 @@ private:
     boost::asio::awaitable<void> read_remote_data()
     {
         auto self = shared_from_this();
+        boost::asio::streambuf read_buffer;
 
         for (;;) {
             if (client_window_size_ == 0)
@@ -320,7 +320,6 @@ private:
 
             boost::system::error_code ec;
 
-            boost::asio::streambuf read_buffer;
             auto bytes = co_await socket_
                              ->async_read_some(read_buffer.prepare(
                                                    std::min<uint16_t>(0x0FFF, client_window_size_)),
@@ -336,6 +335,7 @@ private:
                 }
                 co_return;
             }
+
             read_buffer.commit(bytes);
 
             tcp_packet::tcp_flags flags;
@@ -344,6 +344,7 @@ private:
 
             write_packet(flags, read_buffer.data());
 
+            read_buffer.consume(bytes);
             server_seq_num_ += bytes;
 
             send_ack_timer_.cancel(ec);
@@ -380,6 +381,20 @@ private:
             return;
 
         client_seq_num_ += (uint32_t) buffer.size();
+
+        //auto now = std::chrono::steady_clock::now();
+
+        //if (!is_delay_sendding_) {
+        //    is_delay_sendding_ = true;
+        //    send_ack_timer_.expires_from_now(std::chrono::milliseconds(200));
+        //    send_ack_timer_.async_wait(
+        //        [this, self = shared_from_this()](const boost::system::error_code &ec) {
+        //            is_delay_sendding_ = false;
+        //            if (ec)
+        //                return;
+        //            send_ack();
+        //        });
+        //}
         send_ack();
 
         boost::asio::buffer_copy(tun_wait_buffer_->prepare(buffer.size()), buffer);

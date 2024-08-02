@@ -9,5 +9,7 @@ public:
     tun_device();
 
 private:
-    ip_layer_stack ip_layer_stack_;
+    boost::asio::io_context ioc_;
+    std::unique_ptr<ip_layer_stack> ip_layer_stack_;
+    toys::pool::IOContextPool<1, 1> pool_;
 };

@@ -1,5 +1,4 @@
 #pragma once
-#include "tuntap/buffer.h"
 #include <boost/asio.hpp>
 #include <deque>
 
@@ -18,6 +17,15 @@ struct tun_parameter
     std::optional<address> ipv6;
 };
 
+class recv_buffer
+{
+public:
+    virtual ~recv_buffer() = default;
+    virtual boost::asio::const_buffer data() const = 0;
+};
+
+using recv_buffer_ptr = std::shared_ptr<recv_buffer>;
+
 template<typename Device>
 class basic_tuntap
 {
@@ -30,7 +38,7 @@ public:
     inline void open(const tun_parameter &param) { device_.open(param); }
     inline void close() { device_.close(); }
 
-    boost::asio::io_context &get_io_context() noexcept { return device_.get_io_context(); }
+    auto get_executor() noexcept { return device_.get_executor(); }
 
     boost::asio::awaitable<recv_buffer_ptr> async_read_some(boost::system::error_code &ec)
     {
@@ -43,22 +51,25 @@ public:
         return device_.async_write_some(buffers, ec);
     }
 
-    void write_packet(boost::asio::const_buffer buffer)
+    void write_packet(std::vector<uint8_t> &&buffer)
     {
-        std::vector<uint8_t> copy_buffer;
-        copy_buffer.resize(buffer.size());
-        boost::asio::buffer_copy(boost::asio::buffer(copy_buffer), buffer);
+        std::unique_lock<std::mutex> lck(write_lock_);
 
         bool write_in_process = !write_tun_deque_.empty();
-        write_tun_deque_.push_back(copy_buffer);
+        write_tun_deque_.push_back(std::move(buffer));
         if (write_in_process)
             return;
-        boost::asio::co_spawn(get_io_context(), write_tuntap_packet(), boost::asio::detached);
+        boost::asio::co_spawn(device_.get_io_context(),
+                              write_tuntap_packet(),
+                              boost::asio::detached);
     }
 
 private:
     boost::asio::awaitable<void> write_tuntap_packet()
     {
+        co_await boost::asio::post(co_await boost::asio::this_coro::executor,
+                                   boost::asio::use_awaitable);
+
         while (!write_tun_deque_.empty()) {
             const auto &buffer = write_tun_deque_.front();
             boost::system::error_code ec;

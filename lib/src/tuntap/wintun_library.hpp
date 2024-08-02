@@ -42,7 +42,6 @@
 #include <Wbemidl.h>
 
 #include "tuntap/basic_tuntap.hpp"
-#include "tuntap/buffer.h"
 
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "wbemuuid.lib")
@@ -411,7 +410,62 @@ public:
         if (wintun_adapter_)
             library_->WintunCloseAdapter(wintun_adapter_);
     }
-    inline std::shared_ptr<session> create_session(const tuntap::tun_parameter &param);
+    inline std::shared_ptr<session> create_session(const tuntap::tun_parameter &param)
+    {
+        if (param.ipv4) {
+            MIB_UNICASTIPADDRESS_ROW AddressRow;
+            InitializeUnicastIpAddressEntry(&AddressRow);
+
+            library_->WintunGetAdapterLUID(wintun_adapter_, &AddressRow.InterfaceLuid);
+            AddressRow.Address.Ipv4.sin_family = AF_INET;
+            AddressRow.Address.Ipv4.sin_addr.S_un.S_addr = ::htonl(
+                param.ipv4->addr.to_v4().to_ulong());
+            AddressRow.OnLinkPrefixLength = param.ipv4->prefix_length; /* This is a /32 network */
+            AddressRow.DadState = IpDadStatePreferred;
+
+            auto LastError = CreateUnicastIpAddressEntry(&AddressRow);
+            if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
+                details::log_throw_system_error("Failed to set IPv4 address", LastError);
+        }
+        if (param.ipv6) {
+            MIB_UNICASTIPADDRESS_ROW AddressRow;
+            InitializeUnicastIpAddressEntry(&AddressRow);
+
+            library_->WintunGetAdapterLUID(wintun_adapter_, &AddressRow.InterfaceLuid);
+
+            AddressRow.Address.Ipv6.sin6_family = AF_INET6;
+            memcpy(AddressRow.Address.Ipv6.sin6_addr.u.Byte,
+                   param.ipv6->addr.to_v6().to_bytes().data(),
+                   16);
+            AddressRow.OnLinkPrefixLength = param.ipv6->prefix_length; /* This is a /128 network */
+            AddressRow.DadState = IpDadStatePreferred;
+            auto LastError = CreateUnicastIpAddressEntry(&AddressRow);
+            if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
+                details::log_throw_system_error("Failed to set IPv6 address", LastError);
+        }
+
+        auto Session = library_->WintunStartSession(wintun_adapter_, 0x400000);
+        if (!Session)
+            details::log_throw_last_system_error("Failed to create adapter");
+
+        if (param.ipv4) {
+            auto cmd
+                = std::format("netsh interface ip set dns name=\"{}\" source=static address={}",
+                              param.tun_name,
+                              param.ipv4->dns.to_v4().to_string());
+            //set dns
+            system(cmd.c_str());
+        }
+        if (param.ipv6) {
+            auto cmd = std::format("netsh interface ipv6 set dnsservers \"{}\" static {}",
+                                   param.tun_name,
+                                   param.ipv6->dns.to_v6().to_string());
+            //set dns
+            system(cmd.c_str());
+        }
+
+        return std::make_shared<session>(shared_from_this(), Session);
+    }
     inline std::shared_ptr<session> create_session(const tuntap::tun_parameter &param,
                                                    boost::system::error_code &ec) noexcept
     {
@@ -453,7 +507,6 @@ public:
         {
             return boost::asio::const_buffer(packet_, size_);
         }
-        inline bool empty() const { return size_ == 0; }
 
     private:
         std::shared_ptr<session> session_;
@@ -461,52 +514,35 @@ public:
         DWORD size_;
     };
 
-    class wintun_recv_buffer2 : public tuntap::recv_buffer
-    {
-    public:
-        inline boost::asio::const_buffer data() const override { return buffer_.data(); }
-
-        void copy(BYTE *packet, DWORD size)
-        {
-            boost::asio::buffer_copy(buffer_.prepare(size), boost::asio::const_buffer(packet, size));
-            buffer_.commit(size);
-        }
-
-    private:
-        boost::asio::streambuf buffer_;
-    };
-
 public:
-    static std::shared_ptr<session> create(std::shared_ptr<adapter> _adapter,
-                                           WINTUN_SESSION_HANDLE _session)
+    inline void release_receive_packet(BYTE *packet)
     {
-        return std::shared_ptr<session>(new session(_adapter, _session));
+        adapter_->get_library()->WintunReleaseReceivePacket(wintun_session_, packet);
     }
 
+    session(std::shared_ptr<adapter> _adapter, WINTUN_SESSION_HANDLE _session)
+        : adapter_(_adapter)
+        , wintun_session_(_session)
+    {}
     ~session() { adapter_->get_library()->WintunEndSession(wintun_session_); }
     inline HANDLE read_wait_event()
     {
         return adapter_->get_library()->WintunGetReadWaitEvent(wintun_session_);
     }
 
-    tuntap::recv_buffer_ptr receive_packet()
+    inline std::shared_ptr<wintun_recv_buffer> receive_packet()
     {
         DWORD PacketSize;
         BYTE *Packet = adapter_->get_library()->WintunReceivePacket(wintun_session_, &PacketSize);
         if (Packet) {
-            auto buffer = std::make_shared<session::wintun_recv_buffer2>();
-            buffer->copy(Packet, PacketSize);
-            release_receive_packet(Packet);
-            return buffer;
+            return std::make_shared<wintun_recv_buffer>(shared_from_this(), Packet, PacketSize);
         }
-
         DWORD LastError = GetLastError();
         if (LastError != ERROR_NO_MORE_ITEMS)
             details::log_throw_system_error("Packet read failed", LastError);
         return nullptr;
     }
-
-    tuntap::recv_buffer_ptr receive_packet(boost::system::error_code &ec)
+    inline std::shared_ptr<wintun_recv_buffer> receive_packet(boost::system::error_code &ec)
     {
         try {
             return receive_packet();
@@ -543,75 +579,8 @@ public:
     }
 
 private:
-    inline void release_receive_packet(BYTE *packet)
-    {
-        adapter_->get_library()->WintunSendPacket(wintun_session_, packet);
-    }
-
-protected:
-    session(std::shared_ptr<adapter> _adapter, WINTUN_SESSION_HANDLE _session)
-        : adapter_(_adapter)
-        , wintun_session_(_session)
-    {}
-
-private:
     std::shared_ptr<adapter> adapter_;
     WINTUN_SESSION_HANDLE wintun_session_;
 };
-
-std::shared_ptr<wintun::session> adapter::create_session(const tuntap::tun_parameter &param)
-{
-    if (param.ipv4) {
-        MIB_UNICASTIPADDRESS_ROW AddressRow;
-        InitializeUnicastIpAddressEntry(&AddressRow);
-
-        library_->WintunGetAdapterLUID(wintun_adapter_, &AddressRow.InterfaceLuid);
-        AddressRow.Address.Ipv4.sin_family = AF_INET;
-        AddressRow.Address.Ipv4.sin_addr.S_un.S_addr = ::htonl(param.ipv4->addr.to_v4().to_ulong());
-        AddressRow.OnLinkPrefixLength = param.ipv4->prefix_length; /* This is a /32 network */
-        AddressRow.DadState = IpDadStatePreferred;
-
-        auto LastError = CreateUnicastIpAddressEntry(&AddressRow);
-        if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
-            details::log_throw_system_error("Failed to set IPv4 address", LastError);
-    }
-    if (param.ipv6) {
-        MIB_UNICASTIPADDRESS_ROW AddressRow;
-        InitializeUnicastIpAddressEntry(&AddressRow);
-
-        library_->WintunGetAdapterLUID(wintun_adapter_, &AddressRow.InterfaceLuid);
-
-        AddressRow.Address.Ipv6.sin6_family = AF_INET6;
-        memcpy(AddressRow.Address.Ipv6.sin6_addr.u.Byte,
-               param.ipv6->addr.to_v6().to_bytes().data(),
-               16);
-        AddressRow.OnLinkPrefixLength = param.ipv6->prefix_length; /* This is a /128 network */
-        AddressRow.DadState = IpDadStatePreferred;
-        auto LastError = CreateUnicastIpAddressEntry(&AddressRow);
-        if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
-            details::log_throw_system_error("Failed to set IPv6 address", LastError);
-    }
-
-    auto Session = library_->WintunStartSession(wintun_adapter_, 0x400000);
-    if (!Session)
-        details::log_throw_last_system_error("Failed to create adapter");
-
-    if (param.ipv4) {
-        auto cmd = std::format("netsh interface ip set dns name=\"{}\" source=static address={}",
-                               param.tun_name,
-                               param.ipv4->dns.to_v4().to_string());
-        //set dns
-        system(cmd.c_str());
-    }
-    if (param.ipv6) {
-        auto cmd = std::format("netsh interface ipv6 set dnsservers \"{}\" static {}",
-                               param.tun_name,
-                               param.ipv6->dns.to_v6().to_string());
-        //set dns
-        system(cmd.c_str());
-    }
-
-    return session::create(shared_from_this(), Session);
-}
 
 } // namespace wintun

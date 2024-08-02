@@ -22,7 +22,6 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_enums.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_error_code.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/socks_client/socks_io.hpp
 
-${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/buffer.h
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/tuntap.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/basic_tuntap.hpp
 
@@ -79,7 +78,7 @@ PRIVATE spdlog::spdlog fmt::fmt
 )
 
 if(MSVC)
-	#target_compile_definitions(${MODULE} PRIVATE _WIN32_WINDOWS)
+	target_compile_definitions(${MODULE} PRIVATE _WIN32_WINDOWS)
 	target_compile_options( ${MODULE} PRIVATE
 		"$<$<CXX_COMPILER_ID:MSVC>:/source-charset:utf-8>"
 		"$<$<CXX_COMPILER_ID:MSVC>:/execution-charset:utf-8>"

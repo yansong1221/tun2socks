@@ -7,7 +7,6 @@
 #include <boost/asio/windows/object_handle.hpp>
 
 namespace tuntap {
-
 class wintun_service : public boost::asio::detail::service_base<wintun_service>
 {
 public:
@@ -39,7 +38,7 @@ public:
 
         for (;;) {
             auto buffer = wintun_session_->receive_packet(ec);
-            if (buffer)
+            if (ec || buffer)
                 co_return buffer;
             co_await receive_event_.async_wait(net_awaitable[ec]);
             if (ec)
@@ -52,9 +51,9 @@ public:
     {
         co_await boost::asio::post(this->get_io_context(), boost::asio::use_awaitable);
         wintun_session_->send_packets(buffers, ec);
-        if (ec)
+        if (ec) {
             co_return 0;
-
+        }
         co_return boost::asio::buffer_size(buffers);
     }
 
