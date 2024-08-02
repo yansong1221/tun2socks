@@ -31,16 +31,17 @@ public:
         boost::system::error_code ec;
         receive_event_.close(ec);
     }
+
     template<typename MutableBufferSequence>
-    boost::asio::awaitable<std::size_t> async_read_some(MutableBufferSequence &buffer,
+    boost::asio::awaitable<std::size_t> async_read_some(const MutableBufferSequence &buffer,
                                                         boost::system::error_code &ec)
     {
-        co_await boost::asio::post(this->get_io_context(), boost::asio::use_awaitable);
+        co_await boost::asio::post(get_io_context(), boost::asio::use_awaitable);
 
         for (;;) {
             auto bytes = wintun_session_->receive_packet(buffer, ec);
             if (ec || bytes != 0)
-                co_return buffer;
+                co_return bytes;
             co_await receive_event_.async_wait(net_awaitable[ec]);
             if (ec)
                 co_return 0;
@@ -50,7 +51,8 @@ public:
     boost::asio::awaitable<std::size_t> async_write_some(const ConstBufferSequence &buffers,
                                                          boost::system::error_code &ec)
     {
-        co_await boost::asio::post(this->get_io_context(), boost::asio::use_awaitable);
+        co_await boost::asio::post(get_io_context(), boost::asio::use_awaitable);
+
         wintun_session_->send_packets(buffers, ec);
         if (ec) {
             co_return 0;

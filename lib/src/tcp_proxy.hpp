@@ -94,7 +94,6 @@ public:
               const transport_layer::tcp_endpoint_pair &endpoint_pair,
               abstract::tun2socks &_tun2socks)
         : ioc_(ioc)
-        , send_ack_timer_(ioc)
         , state_(tcp_state::ts_listen)
         , tun2socks_(_tun2socks)
         , local_endpoint_pair_(endpoint_pair)
@@ -102,7 +101,19 @@ public:
     {}
     ~tcp_proxy() { spdlog::info("TCP断开连接: {0}", local_endpoint_pair_.to_string()); }
 
-    void on_tcp_packet(const recv_tcp_packet &packet)
+    void on_tcp_packet(const tcp_packet &packet)
+    {
+        boost::asio::co_spawn(
+            ioc_,
+            [this, packet, self = shared_from_this()]() -> boost::asio::awaitable<void> {
+                co_await this->do_tcp_packet(packet);
+                co_return;
+            },
+            boost::asio::detached);
+    }
+
+private:
+    boost::asio::awaitable<void> do_tcp_packet(tcp_packet packet)
     {
         auto flags = packet.header_data().flags;
         auto seq_num = packet.header_data().seq_num;
@@ -116,28 +127,26 @@ public:
         case tcp_state::ts_listen: {
             if (!flags.flag.syn) {
                 do_close();
-                return;
+                co_return;
             }
 
             state_ = tcp_state::ts_syn_rcvd;
             client_window_size_ = window_size;
             client_seq_num_ = seq_num;
 
-            send_tcp_packet::tcp_flags flags;
+            tcp_packet::tcp_flags flags;
             flags.flag.syn = 1;
             flags.flag.ack = 1;
             write_packet(flags, server_seq_num_, seq_num + 1);
 
-            return;
-
         } break;
         case tcp_state::ts_syn_rcvd: {
             if (!flags.flag.ack) {
-                return;
+                co_return;
             }
 
             if (ack_num != server_seq_num_ + 1 || seq_num != client_seq_num_ + 1) {
-                return;
+                co_return;
             }
             server_seq_num_++;
             client_seq_num_++;
@@ -145,27 +154,26 @@ public:
 
             state_ = tcp_state::ts_established;
             boost::asio::co_spawn(ioc_, start_proxy(), boost::asio::detached);
-            return;
         } break;
         case tcp_state::ts_established: {
             if (!flags.flag.ack) {
-                return;
+                co_return;
             }
             if (flags.flag.rst) {
                 do_close();
-                return;
+                co_return;
             }
 
             if (seq_num == client_seq_num_ - 1 || seq_num < client_seq_num_) {
-                send_tcp_packet::tcp_flags flags;
+                tcp_packet::tcp_flags flags;
                 flags.flag.ack = true;
 
                 write_packet(flags, server_seq_num_, client_seq_num_);
-                return;
+                co_return;
             }
 
             if (seq_num != client_seq_num_) {
-                return;
+                co_return;
             }
 
             client_window_size_ = window_size;
@@ -186,47 +194,46 @@ public:
                 //write_packet(flags, server_seq_num_, seq_num + 1);
                 //co_return;
 
-                send_tcp_packet::tcp_flags flags;
+                tcp_packet::tcp_flags flags;
                 flags.flag.rst = true;
                 flags.flag.ack = true;
                 write_packet(flags, server_seq_num_, seq_num + 1);
 
                 do_close();
-                return;
+                co_return;
             }
-
             write_client_data_to_proxy(packet.payload());
         } break;
         case tcp_state::ts_fin_wait_1: {
             if (ack_num != server_seq_num_) {
-                return;
+                co_return;
             }
             if (flags.flag.rst) {
                 do_close();
-                return;
+                co_return;
             }
 
             if (!flags.flag.ack)
-                return;
+                co_return;
 
             state_ = tcp_state::ts_fin_wait_2;
 
         } break;
         case tcp_state::ts_fin_wait_2: {
             if (ack_num != server_seq_num_) {
-                return;
+                co_return;
             }
             if (flags.flag.rst) {
                 do_close();
-                return;
+                co_return;
             }
 
             if (!flags.flag.ack)
-                return;
+                co_return;
             if (!flags.flag.fin)
-                return;
+                co_return;
 
-            send_tcp_packet::tcp_flags flags;
+            tcp_packet::tcp_flags flags;
             flags.flag.ack = true;
             write_packet(flags, server_seq_num_, seq_num + 1);
             do_close();
@@ -237,10 +244,10 @@ public:
             break;
         case tcp_state::ts_last_ack: {
             if (!flags.flag.ack) {
-                return;
+                co_return;
             }
             if (ack_num != server_seq_num_ + 1) {
-                return;
+                co_return;
             }
             do_close();
         } break;
@@ -251,30 +258,25 @@ public:
         }
     }
 
-    void write_packet(
-        send_tcp_packet::tcp_flags flags,
-        std::shared_ptr<boost::asio::streambuf> payload = std::make_shared<boost::asio::streambuf>())
+    void write_packet(tcp_packet::tcp_flags flags,
+                      const buffer::ref_const_buffer &payload = buffer::ref_const_buffer())
     {
         return write_packet(flags, server_seq_num_, client_seq_num_, payload);
     }
-    void write_packet(
-        send_tcp_packet::tcp_flags flags,
-        uint32_t seq_num,
-        uint32_t ack_num,
-        std::shared_ptr<boost::asio::streambuf> payload = std::make_shared<boost::asio::streambuf>())
+    void write_packet(tcp_packet::tcp_flags flags,
+                      uint32_t seq_num,
+                      uint32_t ack_num,
+                      const buffer::ref_const_buffer &payload = buffer::ref_const_buffer())
     {
-        send_tcp_packet::header header_data;
+        tcp_packet::header header_data;
         header_data.seq_num = seq_num;
         header_data.ack_num = ack_num;
         header_data.flags = flags;
 
-        send_tcp_packet tcp_pack(remote_endpoint_pair_,
-                                 header_data,
-                                 tuntap::send_ref_buffer(payload));
+        tcp_packet tcp_pack(remote_endpoint_pair_, header_data, payload);
         tun2socks_.write_tun_packet(tcp_pack);
     }
 
-private:
     inline void do_close()
     {
         if (socket_ && socket_->is_open()) {
@@ -292,7 +294,7 @@ private:
 
         socket_ = co_await tun2socks_.create_proxy_socket(local_endpoint_pair_);
         if (!socket_) {
-            send_tcp_packet::tcp_flags flags;
+            tcp_packet::tcp_flags flags;
             flags.flag.rst = true;
             flags.flag.ack = true;
             write_packet(flags);
@@ -313,15 +315,15 @@ private:
                 co_return;
 
             boost::system::error_code ec;
-            auto read_buffer = std::make_shared<boost::asio::streambuf>();
+            buffer::ref_buffer buffer;
             auto bytes = co_await socket_
-                             ->async_read_some(read_buffer->prepare(
+                             ->async_read_some(buffer.prepare(
                                                    std::min<uint16_t>(0x0FFF, client_window_size_)),
                                                net_awaitable[ec]);
             if (ec) {
                 //代理远程主动关闭
                 if (state_ == tcp_state::ts_established) {
-                    send_tcp_packet::tcp_flags flags;
+                    tcp_packet::tcp_flags flags;
                     flags.flag.rst = true;
                     flags.flag.ack = true;
                     write_packet(flags);
@@ -330,17 +332,15 @@ private:
                 co_return;
             }
 
-            read_buffer->commit(bytes);
+            buffer.commit(bytes);
 
-            send_tcp_packet::tcp_flags flags;
+            tcp_packet::tcp_flags flags;
             flags.flag.ack = true;
             flags.flag.psh = true;
 
-            write_packet(flags, read_buffer);
+            write_packet(flags, buffer);
 
             server_seq_num_ += bytes;
-
-            send_ack_timer_.cancel(ec);
         }
     }
     boost::asio::awaitable<void> write_client_data_to_proxy()
@@ -354,7 +354,7 @@ private:
             if (ec) {
                 //代理远程主动关闭
                 if (state_ == tcp_state::ts_established) {
-                    send_tcp_packet::tcp_flags flags;
+                    tcp_packet::tcp_flags flags;
                     flags.flag.rst = true;
                     flags.flag.ack = true;
                     write_packet(flags);
@@ -365,26 +365,16 @@ private:
             write_buffer_.pop_front();
         }
     }
-    void write_client_data_to_proxy(const tuntap::recv_ref_buffer &buffer)
+    void write_client_data_to_proxy(buffer::ref_const_buffer buffer)
     {
         if (buffer.size() == 0)
             return;
 
+     /*   if (write_buffer_.size() > 10)
+            return;*/
+
         client_seq_num_ += (uint32_t) buffer.size();
 
-        //auto now = std::chrono::steady_clock::now();
-
-        //if (!is_delay_sendding_) {
-        //    is_delay_sendding_ = true;
-        //    send_ack_timer_.expires_from_now(std::chrono::milliseconds(200));
-        //    send_ack_timer_.async_wait(
-        //        [this, self = shared_from_this()](const boost::system::error_code &ec) {
-        //            is_delay_sendding_ = false;
-        //            if (ec)
-        //                return;
-        //            send_ack();
-        //        });
-        //}
         send_ack();
 
         bool write_in_proceess = !write_buffer_.empty();
@@ -400,7 +390,7 @@ private:
     }
     inline void send_ack()
     {
-        send_tcp_packet::tcp_flags flags;
+        tcp_packet::tcp_flags flags;
         flags.flag.ack = true;
         write_packet(flags);
     }
@@ -410,7 +400,7 @@ private:
     abstract::tun2socks &tun2socks_;
     abstract::tun2socks::tcp_socket_ptr socket_;
 
-    std::deque<tuntap::recv_ref_buffer> write_buffer_;
+    std::deque<buffer::ref_const_buffer> write_buffer_;
 
     transport_layer::tcp_endpoint_pair local_endpoint_pair_;
     transport_layer::tcp_endpoint_pair remote_endpoint_pair_;
@@ -419,8 +409,5 @@ private:
     uint16_t client_window_size_ = 0xFFFF;
     uint32_t server_seq_num_ = 0;
     tcp_state state_;
-
-    boost::asio::steady_timer send_ack_timer_;
-    bool is_delay_sendding_ = false;
 };
 } // namespace transport_layer

@@ -21,13 +21,11 @@ struct alignas(4) tcp_header
 };
 } // namespace details
 
-template<typename RefConstBuffer>
 class tcp_packet
 {
 public:
-    using ref_buffer_type = typename RefConstBuffer;
-
     constexpr static uint8_t protocol = 0x06;
+
     union tcp_flags {
         struct unamed_struct
         {
@@ -48,13 +46,13 @@ public:
         uint32_t seq_num = 0;
         uint32_t ack_num = 0;
         tcp_flags flags;
-        uint16_t window_size = 4096;
+        uint16_t window_size = 0xFFFF;
     };
 
 public:
     explicit tcp_packet(const tcp_endpoint_pair &_endpoint_pair,
                         const tcp_packet::header &header_data,
-                        const ref_buffer_type &payload_buffer)
+                        const buffer::ref_const_buffer &payload_buffer)
         : payload_buffer_(payload_buffer)
         , endpoint_pair_(_endpoint_pair)
         , header_data_(header_data)
@@ -63,17 +61,16 @@ public:
 
     const tcp_endpoint_pair &endpoint_pair() const { return endpoint_pair_; }
     const tcp_packet::header &header_data() const { return header_data_; }
-    const ref_buffer_type &payload() const { return payload_buffer_; }
+    buffer::ref_const_buffer payload() const { return payload_buffer_; }
 
     std::size_t raw_packet_size() const
     {
-        return sizeof(details::tcp_header) + boost::asio::buffer_size(payload());
+        return sizeof(details::tcp_header) + payload_buffer_.size();
     }
 
     std::size_t make_packet(boost::asio::mutable_buffer buffers) const
     {
         uint16_t length = raw_packet_size();
-        auto payload_data = payload();
 
         memset(buffers.data(), 0, length);
 
@@ -85,20 +82,20 @@ public:
         header->data_offset = sizeof(details::tcp_header) / 4;
         header->flags = header_data_.flags.data;
         header->window_size = htons(header_data_.window_size);
-        header->checksum = checksum(header, endpoint_pair_.to_address_pair(), payload_data);
+        header->checksum = checksum(header, endpoint_pair_.to_address_pair(), payload_buffer_);
 
-        memcpy(header + 1, payload_data.data(), payload_data.size());
+        buffers += sizeof(details::tcp_header);
+        boost::asio::buffer_copy(buffers, payload_buffer_);
         return length;
     }
 
-    inline static std::unique_ptr<tcp_packet<ref_buffer_type>> from_ip_packet(
-        const network_layer::ip_packet<ref_buffer_type> &ip_pack)
+    inline static std::optional<tcp_packet> from_ip_packet(const network_layer::ip_packet &ip_pack)
     {
         auto buffer = ip_pack.payload();
 
         if (buffer.size() < sizeof(details::tcp_header)) {
             SPDLOG_WARN("Received packet without room for a tcp header");
-            return nullptr;
+            return std::nullopt;
         }
 
         auto header = boost::asio::buffer_cast<const details::tcp_header *>(buffer);
@@ -106,7 +103,7 @@ public:
 
         if (buffer.size() < header_len) {
             SPDLOG_WARN("Received tcp packet length error");
-            return nullptr;
+            return std::nullopt;
         }
 
         if (checksum(header,
@@ -116,7 +113,7 @@ public:
             != 0) {
             SPDLOG_WARN("Received IPv{0} tcp packet Calculation checksum error",
                         ip_pack.address_pair().ip_version());
-            return nullptr;
+            return std::nullopt;
         }
         tcp_endpoint_pair endpoint_pair(ip_pack.address_pair(),
                                         ::ntohs(header->src_port),
@@ -134,7 +131,7 @@ public:
         header_data.window_size = ntohs(header->window_size);
         header_data.flags.data = header->flags;
 
-        return std::make_unique<tcp_packet<ref_buffer_type>>(endpoint_pair, header_data, buffer);
+        return tcp_packet(endpoint_pair, header_data, buffer);
     }
 
 private:
@@ -195,10 +192,7 @@ private:
 private:
     header header_data_;
     tcp_endpoint_pair endpoint_pair_;
-    ref_buffer_type payload_buffer_;
+    buffer::ref_const_buffer payload_buffer_;
 };
-
-using recv_tcp_packet = tcp_packet<tuntap::recv_ref_buffer>;
-using send_tcp_packet = tcp_packet<tuntap::send_ref_buffer>;
 
 } // namespace transport_layer

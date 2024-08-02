@@ -27,6 +27,7 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/basic_tuntap.hpp
 
 ${CMAKE_CURRENT_SOURCE_DIR}/src/route/route.hpp
 
+${CMAKE_CURRENT_SOURCE_DIR}/src/buffer.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/interface.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/basic_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/misc.hpp

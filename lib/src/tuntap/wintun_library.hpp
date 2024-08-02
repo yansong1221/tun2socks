@@ -530,7 +530,7 @@ public:
     {
         DWORD send_size = (DWORD) boost::asio::buffer_size(buffer);
         if (send_size == 0)
-            return;
+            return 0;
 
         BYTE *Packet = adapter_->get_library()->WintunAllocateSendPacket(wintun_session_, send_size);
         if (Packet) {

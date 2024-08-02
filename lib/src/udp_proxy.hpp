@@ -22,20 +22,26 @@ public:
 public:
     void start() { boost::asio::co_spawn(ioc_, co_read_data(), boost::asio::detached); }
 
-    void on_udp_packet(const transport_layer::recv_udp_packet &pack)
+    void on_udp_packet(const transport_layer::udp_packet &pack)
     {
-        bool write_in_process = !send_buffer_.empty();
-        send_buffer_.push_back(pack.payload());
+        boost::asio::co_spawn(
+            ioc_,
+            [this, pack, self = shared_from_this()]() -> boost::asio::awaitable<void> {
+                bool write_in_process = !send_buffer_.empty();
+                send_buffer_.push_back(pack.payload());
 
-        reset_timeout_timer();
+                reset_timeout_timer();
 
-        if (!socket_)
-            return;
+                if (!socket_)
+                    co_return;
 
-        if (write_in_process)
-            return;
+                if (write_in_process)
+                    co_return;
 
-        boost::asio::co_spawn(ioc_, write_to_proxy(), boost::asio::detached);
+                co_await write_to_proxy();
+                // boost::asio::co_spawn(ioc_, write_to_proxy(), boost::asio::detached);
+            },
+            boost::asio::detached);
     }
 
 private:
@@ -71,8 +77,8 @@ private:
             reset_timeout_timer();
 
             boost::system::error_code ec;
-            auto read_buffer = std::make_shared<boost::asio::streambuf>();
-            auto bytes = co_await socket_->async_receive_from(read_buffer->prepare(0x0FFF),
+            buffer::ref_buffer buffer;
+            auto bytes = co_await socket_->async_receive_from(buffer.prepare(0x0FFF),
                                                               proxy_endpoint_,
                                                               net_awaitable[ec]);
             if (ec) {
@@ -84,11 +90,9 @@ private:
                 co_return;
             }
 
-            read_buffer->commit(bytes);
+            buffer.commit(bytes);
 
-            tuntap::send_ref_buffer buffer(read_buffer);
-
-            transport_layer::send_udp_packet pack(remote_endpoint_pair_, buffer);
+            transport_layer::udp_packet pack(remote_endpoint_pair_, buffer);
             tun2socks_.write_tun_packet(pack);
         }
     }
@@ -131,7 +135,7 @@ private:
     std::chrono::seconds udp_timeout_seconds_ = std::chrono::seconds(60);
     boost::asio::steady_timer udp_timeout_timer_;
 
-    std::deque<tuntap::recv_ref_buffer> send_buffer_;
+    std::deque<buffer::ref_const_buffer> send_buffer_;
 
     transport_layer::udp_endpoint_pair local_endpoint_pair_;
     transport_layer::udp_endpoint_pair remote_endpoint_pair_;

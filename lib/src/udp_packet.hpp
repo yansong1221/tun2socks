@@ -17,26 +17,25 @@ struct alignas(4) udp_header
 };
 
 } // namespace details
-template<typename RefConstBuffer>
+
 class udp_packet
 {
 public:
-    using ref_buffer_type = typename RefConstBuffer;
-
     constexpr static uint8_t protocol = 0x11;
 
 public:
-    udp_packet(const udp_endpoint_pair &endpoint_pair, const ref_buffer_type &payload_buffer)
+    udp_packet(const udp_endpoint_pair &endpoint_pair,
+               const buffer::ref_const_buffer &payload_buffer)
         : payload_buffer_(payload_buffer)
         , endpoint_pair_(endpoint_pair)
     {}
     inline const udp_endpoint_pair &endpoint_pair() const { return endpoint_pair_; }
 
-    const ref_buffer_type &payload() const { return payload_buffer_; }
+    buffer::ref_const_buffer payload() const { return payload_buffer_; }
 
     std::size_t raw_packet_size() const
     {
-        return sizeof(details::udp_header) + boost::asio::buffer_size(payload());
+        return sizeof(details::udp_header) + payload_buffer_.size();
     }
 
     std::size_t make_packet(boost::asio::mutable_buffer buffers) const
@@ -55,23 +54,22 @@ public:
         memcpy(header + 1, paload_data.data(), paload_data.size());
         return length;
     }
-    inline static std::unique_ptr<udp_packet<ref_buffer_type>> from_ip_packet(
-        const network_layer::ip_packet<ref_buffer_type> &ip_pack)
+    inline static std::optional<udp_packet> from_ip_packet(const network_layer::ip_packet &ip_pack)
     {
         if (ip_pack.next_protocol() != udp_packet::protocol)
-            return nullptr;
+            return std::nullopt;
 
         auto buffer = ip_pack.payload();
         if (buffer.size() < sizeof(details::udp_header)) {
             SPDLOG_WARN("Received packet without room for an upd header");
-            return nullptr;
+            return std::nullopt;
         }
 
         auto header = boost::asio::buffer_cast<const details::udp_header *>(buffer);
         uint16_t total_len = ::ntohs(header->length);
         if (total_len != buffer.size()) {
             SPDLOG_WARN("Received udp packet length error");
-            return nullptr;
+            return std::nullopt;
         }
         uint16_t payload_len = total_len - sizeof(details::udp_header);
 
@@ -81,7 +79,7 @@ public:
             != 0) {
             SPDLOG_WARN("Received IPv{0} udp packet Calculation checksum error",
                         ip_pack.address_pair().ip_version());
-            return nullptr;
+            return std::nullopt;
         }
         udp_endpoint_pair point_pair(ip_pack.address_pair(),
                                      ::ntohs(header->src_port),
@@ -93,7 +91,7 @@ public:
 
         buffer += sizeof(details::udp_header);
 
-        return std::make_unique<udp_packet<ref_buffer_type>>(point_pair, buffer);
+        return udp_packet(point_pair, buffer);
     }
 
 private:
@@ -155,10 +153,7 @@ private:
 
 private:
     udp_endpoint_pair endpoint_pair_;
-    ref_buffer_type payload_buffer_;
+    buffer::ref_const_buffer payload_buffer_;
 };
-
-using recv_udp_packet = udp_packet<tuntap::recv_ref_buffer>;
-using send_udp_packet = udp_packet<tuntap::send_ref_buffer>;
 
 } // namespace transport_layer
