@@ -82,7 +82,7 @@ PRIVATE spdlog::spdlog fmt::fmt
 )
 
 if(MSVC)
-	target_compile_definitions(${MODULE} PRIVATE _WIN32_WINDOWS)
+	#target_compile_definitions(${MODULE} PRIVATE _WIN32_WINDOWS)
 	target_compile_options( ${MODULE} PRIVATE
 		"$<$<CXX_COMPILER_ID:MSVC>:/source-charset:utf-8>"
 		"$<$<CXX_COMPILER_ID:MSVC>:/execution-charset:utf-8>"

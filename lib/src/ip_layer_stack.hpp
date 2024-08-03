@@ -119,20 +119,43 @@ public:
             },
             boost::asio::detached);
     }
-
+    void write_tun_packet(const buffer::ref_const_buffer& buffers) override
+    {
+        tuntap_.write_packet(buffers);
+    }
     void write_tun_packet(const transport_layer::tcp_packet &pack) override
     {
         boost::asio::co_spawn(
             ioc_,
             [this, pack]() -> boost::asio::awaitable<void> {
-                buffer::ref_buffer payload;
-                pack.make_packet(payload.prepare(pack.raw_packet_size()));
-                payload.commit(pack.raw_packet_size());
+                buffer::ref_buffer buffers;
 
-                network_layer::ip_packet ip_pack(pack.endpoint_pair().to_address_pair(),
-                                                 transport_layer::tcp_packet::protocol,
-                                                 payload);
-                write_ip_packet(ip_pack);
+                auto ip_header_len = network_layer::ip_packet::make_ip_header_packet_len(
+                    pack.endpoint_pair().to_address_pair());
+                auto tcp_header_len = transport_layer::tcp_packet::make_tcp_header_packet_len();
+                auto tcp_payload_len = pack.payload().size();
+                auto total_len = ip_header_len + tcp_header_len + tcp_payload_len;
+
+                auto p = buffers.prepare(total_len);
+
+                network_layer::ip_packet::make_ip_header_packet(p,
+                                                                pack.endpoint_pair()
+                                                                    .to_address_pair(),
+                                                                transport_layer::tcp_packet::protocol,
+                                                                tcp_header_len + tcp_payload_len);
+                p += ip_header_len;
+
+                transport_layer::tcp_packet::make_ip_header_packet(p,
+                                                                   pack.endpoint_pair(),
+                                                                   pack.header_data(),
+                                                                   pack.payload());
+                p += tcp_header_len;
+
+                boost::asio::buffer_copy(p, pack.payload());
+
+                buffers.commit(total_len);
+
+                tuntap_.write_packet(buffers);
                 co_return;
             },
             boost::asio::detached);
@@ -321,7 +344,7 @@ private:
     }
 
 private:
-    toys::pool::IOContextPool<8, 1> pool_;
+    toys::pool::IOContextPool<1, 1> pool_;
     boost::asio::io_context &ioc_;
 
     tuntap::tuntap tuntap_;

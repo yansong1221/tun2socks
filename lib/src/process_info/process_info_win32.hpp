@@ -17,40 +17,7 @@
 #pragma comment(lib, "Iphlpapi.lib")
 #pragma comment(lib, "Psapi.lib")
 
-namespace local_port_pid {
-inline static void PrintProcessInfo(DWORD processID)
-{
-    TCHAR szProcessName[MAX_PATH] = TEXT("<unknown>");
-    TCHAR szProcessPath[MAX_PATH] = TEXT("<unknown>");
-
-    // 打开指定进程
-    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processID);
-
-    // 获取进程名称和路径
-    if (hProcess != NULL) {
-        HMODULE hMod;
-        DWORD cbNeeded;
-
-        // 获取进程的第一个模块句柄
-        if (EnumProcessModules(hProcess, &hMod, sizeof(hMod), &cbNeeded)) {
-            GetModuleBaseName(hProcess, hMod, szProcessName, sizeof(szProcessName) / sizeof(TCHAR));
-            GetModuleFileNameEx(hProcess,
-                                hMod,
-                                szProcessPath,
-                                sizeof(szProcessPath) / sizeof(TCHAR));
-        }
-    }
-
-    // 打印进程信息
-    _tprintf(TEXT("PID: %u\n"), processID);
-    _tprintf(TEXT("Process name: %s\n"), szProcessName);
-    _tprintf(TEXT("Process path: %s\n"), szProcessPath);
-
-    // 关闭进程句柄
-    if (hProcess) {
-        CloseHandle(hProcess);
-    }
-}
+namespace process_info {
 
 inline static DWORD tcp_using_port(USHORT port)
 {
@@ -126,4 +93,37 @@ inline static DWORD udp_using_port(USHORT port)
     WSACleanup();
     return pid;
 }
-} // namespace local_port_pid
+
+inline std::optional<process_info> get_process_info(uint16_t port)
+{
+    auto processID = tcp_using_port(port);
+    if (processID == 0)
+        processID = udp_using_port(port);
+
+    // 打开指定进程
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processID);
+
+    // 获取进程名称和路径
+    if (hProcess == NULL)
+        return std::nullopt;
+
+    TCHAR szProcessName[MAX_PATH] = TEXT("<unknown>");
+    TCHAR szProcessPath[MAX_PATH] = TEXT("<unknown>");
+
+    HMODULE hMod;
+    DWORD cbNeeded;
+
+    // 获取进程的第一个模块句柄
+    if (EnumProcessModules(hProcess, &hMod, sizeof(hMod), &cbNeeded)) {
+        GetModuleBaseName(hProcess, hMod, szProcessName, sizeof(szProcessName) / sizeof(TCHAR));
+        GetModuleFileNameEx(hProcess, hMod, szProcessPath, sizeof(szProcessPath) / sizeof(TCHAR));
+    }
+    CloseHandle(hProcess);
+
+    process_info info;
+    info.pid = processID;
+    info.name = szProcessName;
+    info.execute_path = szProcessPath;
+    return info;
+}
+} // namespace process_info

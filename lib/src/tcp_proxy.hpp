@@ -272,8 +272,34 @@ private:
         header_data.ack_num = ack_num;
         header_data.flags = flags;
 
-        tcp_packet tcp_pack(remote_endpoint_pair_, header_data, payload);
-        tun2socks_.write_tun_packet(tcp_pack);
+        buffer::ref_buffer buffers;
+
+        auto ip_header_len = network_layer::ip_packet::make_ip_header_packet_len(
+            remote_endpoint_pair_.to_address_pair());
+        auto tcp_header_len = transport_layer::tcp_packet::make_tcp_header_packet_len();
+        auto tcp_payload_len = payload.size();
+        auto total_len = ip_header_len + tcp_header_len + tcp_payload_len;
+
+        auto p = buffers.prepare(total_len);
+
+        network_layer::ip_packet::make_ip_header_packet(p,
+                                                        remote_endpoint_pair_.to_address_pair(),
+                                                        transport_layer::tcp_packet::protocol,
+                                                        tcp_header_len + tcp_payload_len);
+        p += ip_header_len;
+
+        transport_layer::tcp_packet::make_ip_header_packet(p,
+                                                           remote_endpoint_pair_,
+                                                           header_data,
+                                                           payload);
+        p += tcp_header_len;
+
+        boost::asio::buffer_copy(p, payload);
+
+        buffers.commit(total_len);
+
+        //tcp_packet tcp_pack(remote_endpoint_pair_, header_data, payload);
+        tun2socks_.write_tun_packet(buffers);
     }
 
     inline void do_close()
@@ -310,8 +336,15 @@ private:
         auto self = shared_from_this();
 
         for (;;) {
-            if (client_window_size_ == 0)
-                co_return;
+            if (client_window_size_ == 0) {
+                boost::system::error_code ec;
+                boost::asio::steady_timer try_again_timer(co_await boost::asio::this_coro::executor);
+                try_again_timer.expires_from_now(std::chrono::seconds(1));
+                co_await try_again_timer.async_wait(net_awaitable[ec]);
+                if (ec)
+                    co_return;
+                continue;
+            }
 
             boost::system::error_code ec;
             buffer::ref_buffer buffer;
@@ -369,8 +402,8 @@ private:
         if (buffer.size() == 0)
             return;
 
-     /*   if (write_buffer_.size() > 10)
-            return;*/
+        if (write_buffer_.size() > 10)
+            return;
 
         client_seq_num_ += (uint32_t) buffer.size();
 
@@ -404,9 +437,9 @@ private:
     transport_layer::tcp_endpoint_pair local_endpoint_pair_;
     transport_layer::tcp_endpoint_pair remote_endpoint_pair_;
 
-    uint32_t client_seq_num_ = 0; //服务器下一次找客户端需要发送的序列号
-    uint16_t client_window_size_ = 0xFFFF;
-    uint32_t server_seq_num_ = 0;
+    std::atomic_uint32_t client_seq_num_ = 0; //服务器下一次找客户端需要发送的序列号
+    std::atomic_uint16_t client_window_size_ = 0xFFFF;
+    std::atomic_uint32_t server_seq_num_ = 0;
     tcp_state state_;
 };
 } // namespace transport_layer

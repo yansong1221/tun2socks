@@ -146,7 +146,7 @@ public:
         return 0;
     }
 
-    static std::size_t ip_header_len(const network_layer::address_pair_type &address_pair)
+    static std::size_t make_ip_header_packet_len(const network_layer::address_pair_type &address_pair)
     {
         switch (address_pair.ip_version()) {
         case 4:

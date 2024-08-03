@@ -9,6 +9,7 @@ public:
     virtual ~tun2socks() = default;
     virtual void write_tun_packet(const transport_layer::tcp_packet &pack) = 0;
     virtual void write_tun_packet(const transport_layer::udp_packet &pack) = 0;
+    virtual void write_tun_packet(const buffer::ref_const_buffer &buffers) = 0;
     virtual void close_endpoint_pair(const transport_layer::tcp_endpoint_pair &endpoint_pair) = 0;
     virtual void close_endpoint_pair(const transport_layer::udp_endpoint_pair &endpoint_pair) = 0;
 
@@ -22,4 +23,4 @@ public:
         boost::asio::ip::udp::endpoint &proxy_endpoint)
         = 0;
 };
-}; // namespace interface
+}; // namespace abstract
