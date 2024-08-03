@@ -4,33 +4,34 @@
 #include <boost/system/error_code.hpp>
 
 #include <sys/socket.h>
-#include <sys/sysctl.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/types.h>
- 
+
 #include <net/if.h>
 #include <net/route.h>
 #include <netinet/in.h>
- 
-#include <sys/ioctl.h>          // ioctl
-#include <sys/kern_control.h>   // struct socketaddr_ctl
-#include <net/if_utun.h>        // UTUN_CONTROL_NAME
+
+#include <net/if_utun.h>      // UTUN_CONTROL_NAME
+#include <sys/ioctl.h>        // ioctl
+#include <sys/kern_control.h> // struct socketaddr_ctl
 #include <sys/sys_domain.h>
- 
+
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
- 
+
+#include <ifaddrs.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <ifaddrs.h>
- 
+
 #include <cstring>
 #include <iostream>
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
+#include "tuntap/basic_tuntap.hpp"
 
 namespace details {
 inline static boost::system::error_code log_last_system_error(std::string_view prefix)
@@ -131,9 +132,9 @@ inline static bool utun_get_if_name(int tun, std::string &ifrName) noexcept
 }
 
 inline static bool utun_set_if_ip_gw_and_mask(int tun,
-                                const std::string &ip,
-                                const std::string &gw,
-                                const std::string &mask) noexcept
+                                              const std::string &ip,
+                                              const std::string &gw,
+                                              const std::string &mask) noexcept
 {
     if (tun == -1 || ip.empty() || mask.empty()) {
         return false;
@@ -198,9 +199,7 @@ inline static int utun_utunnum(const std::string &dev) noexcept
     v = atoi(s.data());
     if (v < 0) {
         v = 0;
-    }
-    else if (v > UINT8_MAX)
-    {
+    } else if (v > UINT8_MAX) {
         v = UINT8_MAX;
     }
 
@@ -208,14 +207,14 @@ inline static int utun_utunnum(const std::string &dev) noexcept
 }
 } // namespace details
 
-class tun_service_mac
+class tun_service_mac : public boost::asio::detail::service_base<tun_service_mac>
 {
 public:
     tun_service_mac(boost::asio::io_context &ioc)
-        : ioc_(ioc)
+        : boost::asio::detail::service_base<tun_service_mac>(ioc)
         , stream_descriptor_(ioc)
     {}
-    void open()
+    void open(const tuntap::tun_parameter& param)
     {
         struct ifreq ifr;
         struct ifaddrs *ifa;
@@ -227,8 +226,21 @@ public:
 
         stream_descriptor_.assign(fd);
     }
+    template<typename MutableBufferSequence>
+    boost::asio::awaitable<std::size_t> async_read_some(const MutableBufferSequence &buffers,
+                                                        boost::system::error_code &ec)
+    {
+        auto bytes = co_await stream_descriptor_.async_read_some(buffers, net_awaitable[ec]);
+        co_return bytes;
+    }
+    template<typename ConstBufferSequence>
+    boost::asio::awaitable<std::size_t> async_write_some(const ConstBufferSequence &buffers,
+                                                         boost::system::error_code &ec)
+    {
+        auto bytes = co_await stream_descriptor_.async_write_some(buffers, net_awaitable[ec]);
+        co_return bytes;
+    }
 
 private:
-    boost::asio::io_context &ioc_;
     boost::asio::posix::stream_descriptor stream_descriptor_;
 };

@@ -2,6 +2,7 @@
 #include "interface.hpp"
 #include "io_context_pool.hpp"
 #include "ip_packet.hpp"
+#include "process_info/process_info.hpp"
 #include "route/route.hpp"
 #include "tcp_packet.hpp"
 #include "tcp_proxy.hpp"
@@ -153,13 +154,12 @@ public:
             },
             boost::asio::detached);
     }
-    virtual boost::asio::awaitable<tcp_socket_ptr> create_proxy_socket(
-        const transport_layer::tcp_endpoint_pair &endpoint_pair)
+    boost::asio::awaitable<tcp_socket_ptr> create_proxy_socket(
+        const transport_layer::tcp_endpoint_pair &endpoint_pair) override
     {
         spdlog::info("tcp proxy: {}", endpoint_pair.to_string());
 
-        auto pid = local_port_pid::tcp_using_port(endpoint_pair.src.port());
-        local_port_pid::PrintProcessInfo(pid);
+        auto port_info = process_info::get_process_info(endpoint_pair.src.port());
 
         boost::system::error_code ec;
 
@@ -214,8 +214,7 @@ public:
     {
         spdlog::info("udp proxy: {}", endpoint_pair.to_string());
 
-        auto pid = local_port_pid::udp_using_port(endpoint_pair.src.port());
-        local_port_pid::PrintProcessInfo(pid);
+        auto port_info = process_info::get_process_info(endpoint_pair.src.port());
 
         if (endpoint_pair.dest.protocol() == boost::asio::ip::udp::v6())
             co_return nullptr;

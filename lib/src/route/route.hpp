@@ -32,5 +32,6 @@ inline bool del_route_ipapi(const route_ipv4 &r);
 inline bool add_route_ipapi(const route_ipv6 &r);
 inline bool del_route_ipapi(const route_ipv6 &r);
 } // namespace route
-
+#if defined(OS_WINDOWS)
 #include "route_win32.hpp"
+#endif

@@ -97,15 +97,16 @@ public:
             memset(buffer.data(), 0, tot_len);
 
             auto header = boost::asio::buffer_cast<details::ipv4_header *>(buffer);
-
             header->ihl = ihl;
             header->version = 4;
-            header->tot_len = ::htons(tot_len);
-            header->id = ::htons(index++);
+            header->tot_len = boost::asio::detail::socket_ops::host_to_network_short(tot_len);
+            header->id = boost::asio::detail::socket_ops::host_to_network_short(index++);
             header->ttl = 0x30;
             header->protocol = protocol_;
-            header->saddr = ::htonl(address_pair_.src.to_v4().to_ulong());
-            header->daddr = ::htonl(address_pair_.dest.to_v4().to_ulong());
+            header->saddr = boost::asio::detail::socket_ops::host_to_network_long(
+                address_pair_.src.to_v4().to_ulong());
+            header->daddr = boost::asio::detail::socket_ops::host_to_network_long(
+                address_pair_.dest.to_v4().to_ulong());
             header->check = checksum::checksum((const uint8_t *) (header), header_len);
 
             buffer += header_len;
@@ -125,8 +126,10 @@ public:
             memset(buffer.data(), 0, tot_len);
 
             auto header = boost::asio::buffer_cast<details::ipv6_header *>(buffer);
-            header->version_traffic_flow = ::htonl(make_version_traffic_flow(6, 0, 0));
-            header->payload_len = ::htons(payload_len);
+            header->version_traffic_flow = boost::asio::detail::socket_ops::host_to_network_long(
+                make_version_traffic_flow(6, 0, 0));
+            header->payload_len = boost::asio::detail::socket_ops::host_to_network_short(
+                payload_len);
             header->next_header = protocol_;
             header->hop_limit = 0x30;
 
@@ -174,12 +177,14 @@ public:
 
             header->ihl = ihl;
             header->version = 4;
-            header->tot_len = ::htons(tot_len);
-            header->id = ::htons(index++);
+            header->tot_len = boost::asio::detail::socket_ops::host_to_network_short(tot_len);
+            header->id = boost::asio::detail::socket_ops::host_to_network_short(index++);
             header->ttl = 0x30;
             header->protocol = protocol;
-            header->saddr = ::htonl(address_pair.src.to_v4().to_ulong());
-            header->daddr = ::htonl(address_pair.dest.to_v4().to_ulong());
+            header->saddr = boost::asio::detail::socket_ops::host_to_network_long(
+                address_pair.src.to_v4().to_ulong());
+            header->daddr = boost::asio::detail::socket_ops::host_to_network_long(
+                address_pair.dest.to_v4().to_ulong());
             header->check = checksum::checksum((const uint8_t *) (header), header_len);
 
         } break;
@@ -192,8 +197,10 @@ public:
             auto header = boost::asio::buffer_cast<details::ipv6_header *>(buffer);
             memset(header, 0, header_len);
 
-            header->version_traffic_flow = ::htonl(make_version_traffic_flow(6, 0, 0));
-            header->payload_len = ::htons(payload_len);
+            header->version_traffic_flow = boost::asio::detail::socket_ops::host_to_network_long(
+                make_version_traffic_flow(6, 0, 0));
+            header->payload_len = boost::asio::detail::socket_ops::host_to_network_short(
+                payload_len);
             header->next_header = protocol;
             header->hop_limit = 0x30;
 
@@ -204,7 +211,6 @@ public:
         default:
             break;
         }
-        return 0;
     }
     static std::optional<ip_packet> from_buffer(buffer::ref_buffer buffer)
     {
@@ -240,7 +246,10 @@ public:
                 return std::nullopt;
             }
 
-            address_pair_type addr_pair(::htonl(header->saddr), ::htonl(header->daddr));
+            address_pair_type addr_pair(boost::asio::detail::socket_ops::host_to_network_long(
+                                            header->saddr),
+                                        boost::asio::detail::socket_ops::host_to_network_long(
+                                            header->daddr));
 
             SPDLOG_DEBUG("Received IPv4 packet {0} protocol:[0x{1:x}]",
                          addr_pair.to_string(),
@@ -256,12 +265,14 @@ public:
             }
             auto header = boost::asio::buffer_cast<const details::ipv6_header *>(buffers);
 
-            auto version_traffic_flow = ::ntohl(header->version_traffic_flow);
+            auto version_traffic_flow = boost::asio::detail::socket_ops::network_to_host_long(
+                header->version_traffic_flow);
             auto version = (version_traffic_flow >> 28) & 0xF;
             auto traffic = (version_traffic_flow >> 20) & 0xFF;
             auto flow = version_traffic_flow & 0xFFFFF;
 
-            auto payload_len = ::ntohs(header->payload_len);
+            auto payload_len = boost::asio::detail::socket_ops::network_to_host_short(
+                header->payload_len);
 
             boost::asio::ip::address_v6::bytes_type src_addr_bytes;
             boost::asio::ip::address_v6::bytes_type dst_addr_bytes;

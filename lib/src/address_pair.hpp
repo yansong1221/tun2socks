@@ -1,6 +1,6 @@
 #pragma once
 #include <boost/asio.hpp>
-
+#include <fmt/format.h>
 namespace network_layer {
 
 class address_pair_type
@@ -35,7 +35,7 @@ public:
 
     inline std::string to_string() const
     {
-        return std::format("[{0}]->[{1}]", src.to_string(), dest.to_string());
+        return fmt::format("[{0}]->[{1}]", src.to_string(), dest.to_string());
     }
 };
 

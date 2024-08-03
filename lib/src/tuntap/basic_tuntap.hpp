@@ -23,7 +23,7 @@ template<typename Device>
 class basic_tuntap
 {
 public:
-    typedef typename Device device_type;
+    using device_type = Device;
 
     explicit basic_tuntap(boost::asio::io_context &ioc)
         : device_(boost::asio::use_service<device_type>(ioc))

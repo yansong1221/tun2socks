@@ -73,12 +73,12 @@ public:
         uint16_t length = raw_packet_size();
 
         memset(buffers.data(), 0, length);
-
+        
         auto header = boost::asio::buffer_cast<details::tcp_header *>(buffers);
-        header->src_port = ::htons(endpoint_pair_.src.port());
-        header->dest_port = ::htons(endpoint_pair_.dest.port());
-        header->seq_num = ::htonl(header_data_.seq_num);
-        header->ack_num = ::htonl(header_data_.ack_num);
+        header->src_port = boost::asio::detail::socket_ops::host_to_network_short(endpoint_pair_.src.port());
+        header->dest_port = boost::asio::detail::socket_ops::host_to_network_short(endpoint_pair_.dest.port());
+        header->seq_num = boost::asio::detail::socket_ops::host_to_network_long(header_data_.seq_num);
+        header->ack_num = boost::asio::detail::socket_ops::host_to_network_long(header_data_.ack_num);
         header->data_offset = sizeof(details::tcp_header) / 4;
         header->flags = header_data_.flags.data;
         header->window_size = htons(header_data_.window_size);
@@ -115,9 +115,10 @@ public:
                         ip_pack.address_pair().ip_version());
             return std::nullopt;
         }
+        
         tcp_endpoint_pair endpoint_pair(ip_pack.address_pair(),
-                                        ::ntohs(header->src_port),
-                                        ::ntohs(header->dest_port));
+                                        boost::asio::detail::socket_ops::network_to_host_short(header->src_port),
+                                        boost::asio::detail::socket_ops::network_to_host_short(header->dest_port));
 
         SPDLOG_DEBUG("Received IPv{0} TCP Packet {1}",
                      ip_pack.address_pair().ip_version(),
@@ -150,8 +151,8 @@ private:
                 uint8_t protocol;
                 uint16_t tcp_length;
             } psh{0};
-            psh.src_addr = ::htonl(address_pair.src.to_v4().to_ulong());
-            psh.dest_addr = ::htonl(address_pair.dest.to_v4().to_ulong());
+            psh.src_addr = boost::asio::detail::socket_ops::host_to_network_long(address_pair.src.to_v4().to_ulong());
+            psh.dest_addr = boost::asio::detail::socket_ops::host_to_network_long(address_pair.dest.to_v4().to_ulong());
             psh.protocol = tcp_packet::protocol;
             psh.tcp_length = htons(sizeof(details::tcp_header) + (uint16_t) payload.size());
 

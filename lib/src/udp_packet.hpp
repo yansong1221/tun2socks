@@ -46,9 +46,11 @@ public:
         memset(buffers.data(), 0, length);
 
         auto header = boost::asio::buffer_cast<details::udp_header *>(buffers);
-        header->src_port = ::htons(endpoint_pair_.src.port());
-        header->dest_port = ::htons(endpoint_pair_.dest.port());
-        header->length = ::htons(length);
+        header->src_port = boost::asio::detail::socket_ops::host_to_network_short(
+            endpoint_pair_.src.port());
+        header->dest_port = boost::asio::detail::socket_ops::host_to_network_short(
+            endpoint_pair_.dest.port());
+        header->length = boost::asio::detail::socket_ops::host_to_network_short(length);
         header->checksum = checksum(header, endpoint_pair_.to_address_pair(), paload_data);
 
         memcpy(header + 1, paload_data.data(), paload_data.size());
@@ -66,7 +68,7 @@ public:
         }
 
         auto header = boost::asio::buffer_cast<const details::udp_header *>(buffer);
-        uint16_t total_len = ::ntohs(header->length);
+        uint16_t total_len = boost::asio::detail::socket_ops::network_to_host_short(header->length);
         if (total_len != buffer.size()) {
             SPDLOG_WARN("Received udp packet length error");
             return std::nullopt;
@@ -82,8 +84,10 @@ public:
             return std::nullopt;
         }
         udp_endpoint_pair point_pair(ip_pack.address_pair(),
-                                     ::ntohs(header->src_port),
-                                     ::ntohs(header->dest_port));
+                                     boost::asio::detail::socket_ops::network_to_host_short(
+                                         header->src_port),
+                                     boost::asio::detail::socket_ops::network_to_host_short(
+                                         header->dest_port));
 
         SPDLOG_DEBUG("Received IPv{0} udp packet {1}",
                      ip_pack.address_pair().ip_version(),
@@ -110,8 +114,11 @@ private:
                 uint8_t protocol;    // 协议号 (UDP协议为17)
                 uint16_t udp_length; // UDP长度
             } psh{0};
-            psh.src_addr = ::htonl(address_pair.src.to_v4().to_ulong());
-            psh.dest_addr = ::htonl(address_pair.dest.to_v4().to_ulong());
+
+            psh.src_addr = boost::asio::detail::socket_ops::host_to_network_long(
+                address_pair.src.to_v4().to_ulong());
+            psh.dest_addr = boost::asio::detail::socket_ops::host_to_network_long(
+                address_pair.dest.to_v4().to_ulong());
             psh.reserved = 0;
             psh.protocol = udp_packet::protocol;
             psh.udp_length = htons(sizeof(details::udp_header) + (uint16_t) payload.size());

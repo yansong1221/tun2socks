@@ -1,7 +1,7 @@
 
 set(MODULE libtun2socks)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Boost REQUIRED COMPONENTS asio)
@@ -27,12 +27,14 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/basic_tuntap.hpp
 
 ${CMAKE_CURRENT_SOURCE_DIR}/src/route/route.hpp
 
+${CMAKE_CURRENT_SOURCE_DIR}/src/process_info/process_info.hpp
+
+
 ${CMAKE_CURRENT_SOURCE_DIR}/src/buffer.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/interface.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/basic_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/misc.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/platform.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/local_port_pid.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/address_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/endpoint_pair.hpp
@@ -49,13 +51,14 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.cpp
 )
 if(APPLE)
 	list(APPEND SRC_FILES
-		${CMAKE_CURRENT_SOURCE_DIR}/src/tun_service_mac.hpp
+		${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/tun_service_mac.hpp
 	)
 elseif(MSVC)
 	list(APPEND SRC_FILES 
 		${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/wintun_service.hpp
 		${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/wintun_library.hpp
 		${CMAKE_CURRENT_SOURCE_DIR}/src/route/route_win32.hpp
+		${CMAKE_CURRENT_SOURCE_DIR}/src/process_info/process_info_win32.hpp
 	)
 endif()
 
