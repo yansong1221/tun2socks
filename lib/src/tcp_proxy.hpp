@@ -93,6 +93,7 @@ public:
               const transport_layer::tcp_endpoint_pair &endpoint_pair,
               abstract::tun2socks &_tun2socks)
         : ioc_(ioc)
+        , delay_ack_timer_(ioc)
         , state_(tcp_state::ts_listen)
         , tun2socks_(_tun2socks)
         , local_endpoint_pair_(endpoint_pair)
@@ -267,6 +268,10 @@ private:
                       uint32_t ack_num,
                       const buffer::ref_const_buffer &payload = buffer::ref_const_buffer())
     {
+        boost::system::error_code ec;
+        delay_ack_timer_.cancel(ec);
+        is_delay_ack_ = false;
+
         tcp_packet::header header_data;
         header_data.seq_num = seq_num;
         header_data.ack_num = ack_num;
@@ -409,10 +414,21 @@ private:
 
         client_seq_num_ += sz;
 
-        server_window_size_ = std::max<int>(1, (int)server_window_size_ - sz);
+        server_window_size_ = std::max<int>(1, (int) server_window_size_ - sz);
 
         //延迟发送ack
-        send_ack();
+        if (!is_delay_ack_) {
+            is_delay_ack_ = true;
+            delay_ack_timer_.expires_from_now(std::chrono::milliseconds(200));
+            delay_ack_timer_.async_wait(
+                [this, self = shared_from_this()](const boost::system::error_code &ec) {
+                    if (ec)
+                        return;
+                    tcp_packet::tcp_flags flags;
+                    flags.flag.ack = true;
+                    write_packet(flags);
+                });
+        }
 
         bool write_in_proceess = !write_buffer_.empty();
         write_buffer_.push_back(buffer);
@@ -424,12 +440,6 @@ private:
             return;
 
         boost::asio::co_spawn(ioc_, write_client_data_to_proxy(), boost::asio::detached);
-    }
-    inline void send_ack()
-    {
-        tcp_packet::tcp_flags flags;
-        flags.flag.ack = true;
-        write_packet(flags);
     }
 
 private:
@@ -448,5 +458,8 @@ private:
     std::atomic_uint32_t server_seq_num_ = 0;
     std::atomic_uint16_t server_window_size_ = 0xFFFF;
     tcp_state state_;
+
+    bool is_delay_ack_ = false;
+    boost::asio::steady_timer delay_ack_timer_;
 };
 } // namespace transport_layer
