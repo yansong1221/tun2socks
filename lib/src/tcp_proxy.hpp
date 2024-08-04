@@ -271,6 +271,7 @@ private:
         header_data.seq_num = seq_num;
         header_data.ack_num = ack_num;
         header_data.flags = flags;
+        header_data.window_size = server_window_size_;
 
         buffer::ref_buffer buffers;
 
@@ -394,6 +395,8 @@ private:
                 }
                 co_return;
             }
+            server_window_size_ = std::min<uint32_t>((uint32_t) server_window_size_ + buffer.size(),
+                                                     0xFFFF);
             write_buffer_.pop_front();
         }
     }
@@ -402,11 +405,13 @@ private:
         if (buffer.size() == 0)
             return;
 
-        if (write_buffer_.size() > 10)
-            return;
+        auto sz = (uint16_t) buffer.size();
 
-        client_seq_num_ += (uint32_t) buffer.size();
+        client_seq_num_ += sz;
 
+        server_window_size_ = std::max<int>(1, (int)server_window_size_ - sz);
+
+        //延迟发送ack
         send_ack();
 
         bool write_in_proceess = !write_buffer_.empty();
@@ -439,7 +444,9 @@ private:
 
     std::atomic_uint32_t client_seq_num_ = 0; //服务器下一次找客户端需要发送的序列号
     std::atomic_uint16_t client_window_size_ = 0xFFFF;
+
     std::atomic_uint32_t server_seq_num_ = 0;
+    std::atomic_uint16_t server_window_size_ = 0xFFFF;
     tcp_state state_;
 };
 } // namespace transport_layer
