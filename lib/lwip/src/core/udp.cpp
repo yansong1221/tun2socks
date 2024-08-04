@@ -353,10 +353,10 @@ udp_input(struct pbuf *p, struct netif *inp)
       pcb = udp_new();
       pcb->last_active = now;
       pcb->local_port = dest;
-      pcb->local_ip.addr = ip4_current_dest_addr()->addr;
+      memcpy(&pcb->local_ip, ip_current_dest_addr(), sizeof(pcb->local_ip));
       // udp_connect
       pcb->remote_port = src;
-      pcb->remote_ip.addr = ip4_current_src_addr()->addr;
+      memcpy(&pcb->remote_ip, ip_current_src_addr(), sizeof(pcb->remote_ip));
       pcb->flags |= UDP_FLAGS_CONNECTED;
       // udp_bind
       pcb->next = udp_pcbs;

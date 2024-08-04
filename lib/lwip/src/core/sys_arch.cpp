@@ -1,13 +1,14 @@
 #include <time.h>
 #include <Windows.h>
-#include <hash_set>
+#include <unordered_set>
 #include <mutex>
 
 #include "lwip/sys.h"
 
+
 static LARGE_INTEGER freq, sys_start_time;
 static std::mutex sys_arch_pcb_sets_syncobj;
-static stdext::hash_set<void*> sys_arch_pcb_sets;
+static std::unordered_set<void *> sys_arch_pcb_sets;
 
 void sys_init(void) {
 	QueryPerformanceFrequency(&freq);

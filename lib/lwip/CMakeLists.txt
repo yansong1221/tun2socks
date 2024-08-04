@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.7)
 
-project(lwIP)
+project(lwIP LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(LWIP_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 include(src/Filelists.cmake)

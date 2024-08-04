@@ -4,6 +4,7 @@ set(MODULE libtun2socks)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lwip/src/include/)
 add_subdirectory(lwip)
 
 find_package(Boost REQUIRED COMPONENTS asio)
@@ -50,6 +51,7 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks.cpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.h
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.cpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/lwipstack.h
 )
 if(APPLE)
 	list(APPEND SRC_FILES

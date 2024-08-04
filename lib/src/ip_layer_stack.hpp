@@ -2,14 +2,16 @@
 #include "interface.hpp"
 #include "io_context_pool.hpp"
 #include "ip_packet.hpp"
+#include "lwipstack.h"
 #include "process_info/process_info.hpp"
 #include "route/route.hpp"
 #include "tcp_packet.hpp"
-#include "tcp_proxy.hpp"
+#include "tcp_proxy_ex.hpp"
 #include "tuntap/tuntap.hpp"
 #include "udp_packet.hpp"
 #include "udp_proxy.hpp"
 #include <queue>
+
 class ip_layer_stack : public abstract::tun2socks
 {
 public:
@@ -64,29 +66,77 @@ public:
             route::add_route_ipapi(info);
         }
 
+        LWIPStack::getInstance().init(ioc_);
+        auto t_pcb = LWIPStack::tcp_listen_any();
+        auto u_pcb = LWIPStack::udp_listen_any();
+
+        LWIPStack::lwip_tcp_arg(t_pcb, this);
+
+        LWIPStack::lwip_tcp_accept(t_pcb, [](void *arg, struct tcp_pcb *newpcb, err_t err) -> err_t {
+            if (err != ERR_OK || newpcb == NULL)
+                return ERR_VAL;
+
+            auto self = (ip_layer_stack *) arg;
+            return self->on_tcp_accept(newpcb);
+        });
+
+        LWIPStack::getInstance().set_output_function(
+            [this](struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr) -> err_t {
+                buffer::ref_buffer buffer;
+                auto buf = buffer.prepare(p->tot_len);
+                pbuf_copy_partial(p, buf.data(), p->tot_len, 0);
+                buffer.commit(p->tot_len);
+                tuntap_.write_packet(buffer);
+                return ERR_OK;
+            });
+
         boost::asio::co_spawn(tuntap_.get_io_context(), receive_ip_packet(), boost::asio::detached);
 
         pool_.Start();
         pool_.Wait();
     }
 
-    boost::asio::awaitable<void> on_ip_packet(buffer::ref_buffer buffer)
+    err_t on_tcp_accept(struct tcp_pcb *newpcb)
     {
-        auto ip_pack = network_layer::ip_packet::from_buffer(buffer);
-        if (!ip_pack)
-            co_return;
+        // Ports are always in host byte order.
+        auto src_port = newpcb->remote_port;
+        auto dest_port = newpcb->local_port;
 
-        switch (ip_pack->next_protocol()) {
-        case transport_layer::udp_packet::protocol:
-            on_udp_packet(*ip_pack);
-            break;
-        case transport_layer::tcp_packet::protocol:
-            on_tcp_packet(*ip_pack);
-            break;
-        default:
-            break;
+        network_layer::address_pair_type addr_pair;
+
+        if (newpcb->local_ip.type == IPADDR_TYPE_V4) {
+            // IP addresses are always in network order.
+            boost::asio::ip::address_v4 dest_ip(
+                boost::asio::detail::socket_ops::network_to_host_long(
+                    newpcb->local_ip.u_addr.ip4.addr));
+            boost::asio::ip::address_v4 src_ip(boost::asio::detail::socket_ops::network_to_host_long(
+                newpcb->remote_ip.u_addr.ip4.addr));
+
+            addr_pair = network_layer::address_pair_type(src_ip, dest_ip);
+
+        } else {
+            // IP addresses are always in network order.
+            boost::asio::ip::address_v6::bytes_type dest_ip;
+            boost::asio::ip::address_v6::bytes_type src_ip;
+
+            memcpy(dest_ip.data(), newpcb->local_ip.u_addr.ip6.addr, 16);
+            memcpy(src_ip.data(), newpcb->remote_ip.u_addr.ip6.addr, 16);
+
+            addr_pair = network_layer::address_pair_type(src_ip, dest_ip);
         }
+
+        transport_layer::tcp_endpoint_pair endpoint_pair(addr_pair, src_port, dest_port);
+
+        auto proxy = std::make_shared<transport_layer::tcp_proxy>(pool_.getIOContext(),
+                                                                  newpcb,
+                                                                  endpoint_pair,
+                                                                  *this);
+        tcp_proxy_map_[endpoint_pair] = proxy;
+
+        proxy->start();
+        return ERR_OK;
     }
+
     boost::asio::awaitable<void> receive_ip_packet()
     {
         for (;;) {
@@ -95,7 +145,10 @@ public:
             if (ec)
                 co_return;
 
-            boost::asio::co_spawn(ioc_, on_ip_packet(buffer), boost::asio::detached);
+            auto p = pbuf_alloc(pbuf_layer::PBUF_RAW, buffer.size(), pbuf_type::PBUF_REF);
+            p->payload = (void *) buffer.data().data();
+
+            LWIPStack::getInstance().strand_ip_input(p, [buffer](err_t err) {});
         }
     };
 
@@ -119,7 +172,7 @@ public:
             },
             boost::asio::detached);
     }
-    void write_tun_packet(const buffer::ref_const_buffer& buffers) override
+    void write_tun_packet(const buffer::ref_const_buffer &buffers) override
     {
         tuntap_.write_packet(buffers);
     }
@@ -325,23 +378,23 @@ private:
         }
         proxy->on_udp_packet(*udp_pack);
     }
-    void on_tcp_packet(const network_layer::ip_packet &ip_pack)
-    {
-        auto tcp_pack = transport_layer::tcp_packet::from_ip_packet(ip_pack);
-        if (!tcp_pack)
-            return;
+    //void on_tcp_packet(const network_layer::ip_packet &ip_pack)
+    //{
+    //    auto tcp_pack = transport_layer::tcp_packet::from_ip_packet(ip_pack);
+    //    if (!tcp_pack)
+    //        return;
 
-        auto endpoint_pair = tcp_pack->endpoint_pair();
+    //    auto endpoint_pair = tcp_pack->endpoint_pair();
 
-        auto proxy = tcp_proxy_map_[endpoint_pair];
-        if (!proxy) {
-            proxy = std::make_shared<transport_layer::tcp_proxy>(pool_.getIOContext(),
-                                                                 endpoint_pair,
-                                                                 *this);
-            tcp_proxy_map_[endpoint_pair] = proxy;
-        }
-        proxy->on_tcp_packet(*tcp_pack);
-    }
+    //    auto proxy = tcp_proxy_map_[endpoint_pair];
+    //    if (!proxy) {
+    //        proxy = std::make_shared<transport_layer::tcp_proxy>(pool_.getIOContext(),
+    //                                                             endpoint_pair,
+    //                                                             *this);
+    //        tcp_proxy_map_[endpoint_pair] = proxy;
+    //    }
+    //    proxy->on_tcp_packet(*tcp_pack);
+    //}
 
 private:
     toys::pool::IOContextPool<1, 1> pool_;
