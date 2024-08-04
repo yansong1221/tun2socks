@@ -4,6 +4,8 @@ set(MODULE libtun2socks)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_subdirectory(lwip)
+
 find_package(Boost REQUIRED COMPONENTS asio)
 find_package(spdlog CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
@@ -74,11 +76,13 @@ target_include_directories(${MODULE}
 	${CMAKE_CURRENT_SOURCE_DIR}/include/
 	PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/src/
+	${CMAKE_CURRENT_SOURCE_DIR}/lwip/src/include/
 )
 
 target_link_libraries(${MODULE} 
 PRIVATE Boost::asio
 PRIVATE spdlog::spdlog fmt::fmt
+PUBLIC lwipcore
 )
 
 if(MSVC)
