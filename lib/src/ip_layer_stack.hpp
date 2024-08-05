@@ -2,6 +2,7 @@
 #include "interface.hpp"
 #include "io_context_pool.hpp"
 #include "ip_packet.hpp"
+#include "lwip.hpp"
 #include "lwipstack.h"
 #include "process_info/process_info.hpp"
 #include "route/route.hpp"
@@ -67,18 +68,19 @@ public:
         }
 
         LWIPStack::getInstance().init(ioc_);
-        auto t_pcb = LWIPStack::tcp_listen_any();
-        auto u_pcb = LWIPStack::udp_listen_any();
+        auto t_pcb = LWIPStack::getInstance().tcp_listen_any();
+        auto u_pcb = LWIPStack::getInstance().udp_listen_any();
 
-        LWIPStack::lwip_tcp_arg(t_pcb, this);
+        LWIPStack::getInstance().lwip_tcp_arg(t_pcb, this);
 
-        LWIPStack::lwip_tcp_accept(t_pcb, [](void *arg, struct tcp_pcb *newpcb, err_t err) -> err_t {
-            if (err != ERR_OK || newpcb == NULL)
-                return ERR_VAL;
+        LWIPStack::getInstance()
+            .lwip_tcp_accept(t_pcb, [](void *arg, struct tcp_pcb *newpcb, err_t err) -> err_t {
+                if (err != ERR_OK || newpcb == NULL)
+                    return ERR_VAL;
 
-            auto self = (ip_layer_stack *) arg;
-            return self->on_tcp_accept(newpcb);
-        });
+                auto self = (ip_layer_stack *) arg;
+                return self->on_tcp_accept(newpcb);
+            });
 
         LWIPStack::getInstance().set_output_function(
             [this](struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr) -> err_t {
@@ -131,8 +133,6 @@ public:
                                                                   newpcb,
                                                                   endpoint_pair,
                                                                   *this);
-        tcp_proxy_map_[endpoint_pair] = proxy;
-
         proxy->start();
         return ERR_OK;
     }
@@ -148,20 +148,10 @@ public:
             auto p = pbuf_alloc(pbuf_layer::PBUF_RAW, buffer.size(), pbuf_type::PBUF_REF);
             p->payload = (void *) buffer.data().data();
 
-            LWIPStack::getInstance().strand_ip_input(p, [buffer](err_t err) {});
+            LWIPStack::getInstance().lwip_ip_input(p);
         }
     };
 
-    void close_endpoint_pair(const transport_layer::tcp_endpoint_pair &endpoint_pair) override
-    {
-        boost::asio::co_spawn(
-            ioc_,
-            [this, endpoint_pair]() -> boost::asio::awaitable<void> {
-                tcp_proxy_map_.erase(endpoint_pair);
-                co_return;
-            },
-            boost::asio::detached);
-    }
     void close_endpoint_pair(const transport_layer::udp_endpoint_pair &endpoint_pair) override
     {
         boost::asio::co_spawn(
@@ -407,7 +397,5 @@ private:
 
     boost::asio::ip::tcp::endpoint socks5_endpoint_;
 
-    std::unordered_map<transport_layer::tcp_endpoint_pair, transport_layer::tcp_proxy::ptr>
-        tcp_proxy_map_;
     std::unordered_map<transport_layer::udp_endpoint_pair, udp_proxy::ptr> udp_proxy_map_;
 };

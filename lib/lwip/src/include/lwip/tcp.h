@@ -358,7 +358,7 @@ struct tcp_pcb {
 
 #if LWIP_CALLBACK_API
   /* Function to be called when more send buffer space is available. */
-  tcp_sent_fn sent;
+  std::function<std::remove_pointer<tcp_sent_fn>::type> sent;
   /* Function to be called when (in-sequence) data has arrived. */
   /*
 	7. tun2socks: Cool! Now we have std::function as callbacks.
@@ -427,8 +427,8 @@ void			 tcp_kill_wait		(void);
 void             tcp_arg			(struct tcp_pcb *pcb, void *arg);
 #if LWIP_CALLBACK_API
 void             tcp_recv			(struct tcp_pcb *pcb, std::function<std::remove_pointer<tcp_recv_fn>::type> recv);
-void             tcp_sent			(struct tcp_pcb *pcb, tcp_sent_fn sent);
-void             tcp_err			(struct tcp_pcb *pcb, std::function<std::remove_pointer<tcp_err_fn>::type> err);
+void tcp_sent(struct tcp_pcb *pcb, std::function<std::remove_pointer<tcp_sent_fn>::type> sent);
+void tcp_err(struct tcp_pcb *pcb, std::function<std::remove_pointer<tcp_err_fn>::type> err);
 void             tcp_accept			(struct tcp_pcb *pcb, tcp_accept_fn accept);
 #endif /* LWIP_CALLBACK_API */
 void             tcp_poll			(struct tcp_pcb *pcb, tcp_poll_fn poll, u8_t interval);

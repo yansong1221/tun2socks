@@ -2098,8 +2098,7 @@ tcp_recv(struct tcp_pcb *pcb, std::function<std::remove_pointer<tcp_recv_fn>::ty
  * @param pcb tcp_pcb to set the sent callback
  * @param sent callback function to call for this pcb when data is successfully sent
  */
-void
-tcp_sent(struct tcp_pcb *pcb, tcp_sent_fn sent)
+void tcp_sent(struct tcp_pcb *pcb, std::function<std::remove_pointer<tcp_sent_fn>::type> sent)
 {
 	LWIP_ASSERT_CORE_LOCKED();
 	if (pcb != NULL) {
