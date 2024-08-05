@@ -42,12 +42,12 @@ class ref_buffer
 {
 public:
     ref_buffer()
-        : streambuf_(streambuf_pool::instance().create())
+        : streambuf_(std::make_shared<boost::asio::streambuf>())
     {}
     ~ref_buffer()
     {
-        if (streambuf_.use_count() == 1)
-            streambuf_pool::instance().put(streambuf_);
+        // if (streambuf_.use_count() == 1)
+        //     streambuf_pool::instance().put(streambuf_);
     }
     boost::asio::streambuf::mutable_buffers_type prepare(std::size_t n)
     {

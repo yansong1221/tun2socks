@@ -53,7 +53,6 @@ public:
                 }
 
                 boost::asio::co_spawn(ioc_, read_remote_data(self), boost::asio::detached);
-                boost::asio::co_spawn(ioc_, write_client_data_to_proxy(self), boost::asio::detached);
             },
             boost::asio::detached);
     }
@@ -78,15 +77,25 @@ private:
             return ERR_OK;
         }
 
-        buffer::ref_buffer buffer;
-        auto buf = buffer.prepare(p->tot_len);
-        pbuf_copy_partial(p, buf.data(), p->tot_len, 0);
-        buffer.commit(p->tot_len);
+        if (!socket_)
+            return ERR_MEM;
 
-        write_client_data_to_proxy(buffer);
+        if (proxy_swap_buffer->size() >= 65535)
+            return ERR_MEM;
 
         LWIPStack::getInstance().lwip_tcp_recved(tpcb, p->tot_len);
 
+        auto buf = proxy_swap_buffer->prepare(p->tot_len);
+        pbuf_copy_partial(p, buf.data(), p->tot_len, 0);
+        proxy_swap_buffer->commit(p->tot_len);
+
+        if (proxy_send_buffer->size() == 0) {
+            proxy_send_buffer.swap(proxy_swap_buffer);
+
+            boost::asio::co_spawn(ioc_,
+                                  write_client_data_to_proxy(shared_from_this()),
+                                  boost::asio::detached);
+        }
         return ERR_OK;
     }
 
@@ -112,7 +121,7 @@ private:
                 err_t code = LWIPStack::getInstance().lwip_tcp_write(pcb_,
                                                                      buf.data(),
                                                                      buf.size(),
-                                                                     0);
+                                                                     TCP_WRITE_FLAG_COPY);
                 if (code == ERR_MEM) {
                     return;
                 }
@@ -120,8 +129,14 @@ private:
                     do_close();
                     return;
                 }
-                LWIPStack::getInstance().lwip_tcp_output(pcb_);
+
                 send_buffer_.pop();
+
+                code = LWIPStack::getInstance().lwip_tcp_output(pcb_);
+                if (code != ERR_OK) {
+                    do_close();
+                    return;
+                }
             }
         });
     }
@@ -130,8 +145,9 @@ private:
         for (; pcb_;) {
             boost::system::error_code ec;
             buffer::ref_buffer buffer;
-            int sent = std::min<int>(TCP_MSS, LWIPStack::getInstance().lwip_tcp_sndbuf(pcb_));
-            auto bytes = co_await socket_->async_read_some(buffer.prepare(sent), net_awaitable[ec]);
+            //int sent = std::min<int>(TCP_MSS, LWIPStack::getInstance().lwip_tcp_sndbuf(pcb_));
+            auto bytes = co_await socket_->async_read_some(buffer.prepare(TCP_MSS),
+                                                           net_awaitable[ec]);
             if (ec) {
                 do_close();
                 co_return;
@@ -143,34 +159,20 @@ private:
     }
     boost::asio::awaitable<void> write_client_data_to_proxy(tcp_proxy::ptr self)
     {
-        while (!write_buffer_.empty()) {
+        while (proxy_send_buffer->size() > 0) {
             boost::system::error_code ec;
-            auto buffer = write_buffer_.front();
-            auto bytes = co_await boost::asio::async_write(*socket_, buffer, net_awaitable[ec]);
+            auto bytes = co_await boost::asio::async_write(*socket_,
+                                                           proxy_send_buffer->data(),
+                                                           net_awaitable[ec]);
             if (ec) {
                 do_close();
                 co_return;
             }
-            write_buffer_.pop_front();
+            proxy_send_buffer->consume(bytes);
+
+            if (proxy_send_buffer->size() == 0)
+                proxy_send_buffer.swap(proxy_swap_buffer);
         }
-    }
-    void write_client_data_to_proxy(buffer::ref_const_buffer buffer)
-    {
-        if (buffer.size() == 0)
-            return;
-
-        bool write_in_proceess = !write_buffer_.empty();
-        write_buffer_.push_back(buffer);
-
-        if (!socket_)
-            return;
-
-        if (write_in_proceess)
-            return;
-
-        boost::asio::co_spawn(ioc_,
-                              write_client_data_to_proxy(shared_from_this()),
-                              boost::asio::detached);
     }
 
 private:
@@ -181,7 +183,18 @@ private:
 
     transport_layer::tcp_endpoint_pair local_endpoint_pair_;
 
-    std::deque<buffer::ref_const_buffer> write_buffer_;
+    std::unique_ptr<boost::asio::streambuf> proxy_send_buffer
+        = std::make_unique<boost::asio::streambuf>();
+    std::unique_ptr<boost::asio::streambuf> proxy_swap_buffer
+        = std::make_unique<boost::asio::streambuf>();
+
+    std::unique_ptr<boost::asio::streambuf> local_send_buffer
+        = std::make_unique<boost::asio::streambuf>();
+    std::unique_ptr<boost::asio::streambuf> local_swap_buffer
+        = std::make_unique<boost::asio::streambuf>();
+
+    std::deque<buffer::ref_const_buffer>
+            write_buffer_;
     std::queue<buffer::ref_const_buffer> send_buffer_;
 };
 } // namespace transport_layer
