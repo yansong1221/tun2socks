@@ -21,57 +21,56 @@ public:
 public:
     void start()
     {
-        LWIPStack::getInstance().lwip_udp_set_timeout(pcb_, 1000 * 60);
-        LWIPStack::getInstance().lwip_udp_timeout(pcb_, [this](struct udp_pcb *pcb) {
+        lwip::lwip_udp_set_timeout(pcb_, 1000 * 60);
+        lwip::lwip_udp_timeout(pcb_, [this](struct udp_pcb *pcb) {
             if (pcb == nullptr)
                 return;
             do_close();
         });
-        LWIPStack::getInstance()
-            .lwip_udp_recv(pcb_,
-                           [this](void *arg,
-                                  struct udp_pcb *pcb,
-                                  struct pbuf *p,
-                                  const ip_addr_t *addr,
-                                  u16_t port) {
-                               if (pcb == nullptr)
-                                   return;
-                               if (!socket_)
-                                   return;
+        lwip::lwip_udp_recv(pcb_,
+                            [this](void *arg,
+                                   struct udp_pcb *pcb,
+                                   struct pbuf *p,
+                                   const ip_addr_t *addr,
+                                   u16_t port) {
+                                if (pcb == nullptr)
+                                    return;
+                                if (!socket_)
+                                    return;
 
-                               if (send_queue_.size() >= 10)
-                                   return;
+                                if (send_queue_.size() >= 10)
+                                    return;
 
-                               toys::wrapper::pbuf_buffer buffer(p, false);
-                               bool write_in_process = !send_queue_.empty();
-                               send_queue_.push_back(buffer);
-                               if (write_in_process)
-                                   return;
+                                toys::wrapper::pbuf_buffer buffer(p, false);
+                                bool write_in_process = !send_queue_.empty();
+                                send_queue_.push_back(buffer);
+                                if (write_in_process)
+                                    return;
 
-                               boost::asio::co_spawn(
-                                   ioc_,
-                                   [this,
-                                    self = shared_from_this()]() -> boost::asio::awaitable<void> {
-                                       while (!send_queue_.empty()) {
-                                           boost::system::error_code ec;
-                                           const auto &buffer = send_queue_.front();
-                                           co_await socket_->async_send_to(buffer.data(),
-                                                                           proxy_endpoint_,
-                                                                           net_awaitable[ec]);
+                                boost::asio::co_spawn(
+                                    ioc_,
+                                    [this,
+                                     self = shared_from_this()]() -> boost::asio::awaitable<void> {
+                                        while (!send_queue_.empty()) {
+                                            boost::system::error_code ec;
+                                            const auto &buffer = send_queue_.front();
+                                            co_await socket_->async_send_to(buffer.data(),
+                                                                            proxy_endpoint_,
+                                                                            net_awaitable[ec]);
 
-                                           if (ec) {
-                                               spdlog::warn("发送 UDP 数据失败: [{}]:{} {}",
-                                                            proxy_endpoint_.address().to_string(),
-                                                            proxy_endpoint_.port(),
-                                                            ec.message());
-                                               do_close();
-                                               co_return;
-                                           }
-                                           send_queue_.pop_front();
-                                       }
-                                   },
-                                   boost::asio::detached);
-                           });
+                                            if (ec) {
+                                                spdlog::warn("发送 UDP 数据失败: [{}]:{} {}",
+                                                             proxy_endpoint_.address().to_string(),
+                                                             proxy_endpoint_.port(),
+                                                             ec.message());
+                                                do_close();
+                                                co_return;
+                                            }
+                                            send_queue_.pop_front();
+                                        }
+                                    },
+                                    boost::asio::detached);
+                            });
         boost::asio::co_spawn(
             ioc_,
             [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
@@ -97,7 +96,7 @@ public:
                         co_return;
                     }
                     buffer.realloc(bytes);
-                    LWIPStack::getInstance().lwip_udp_send(pcb_, &buffer);
+                    lwip::lwip_udp_send(pcb_, &buffer);
                 }
             },
             boost::asio::detached);
@@ -107,9 +106,9 @@ private:
     void do_close()
     {
         if (pcb_) {
-            LWIPStack::getInstance().lwip_udp_timeout(pcb_, nullptr);
-            LWIPStack::getInstance().lwip_udp_recv(pcb_, nullptr);
-            ::udp_disconnect(pcb_);
+            lwip::lwip_udp_timeout(pcb_, nullptr);
+            lwip::lwip_udp_recv(pcb_, nullptr);
+            lwip::lwip_udp_disconnect(pcb_);
             pcb_ = nullptr;
         }
         if (socket_ && socket_->is_open()) {

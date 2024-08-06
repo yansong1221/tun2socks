@@ -1,6 +1,6 @@
 #pragma once
 #include "interface.hpp"
-#include "lwipstack.h"
+#include "lwip.hpp"
 #include "process_info/process_info.hpp"
 #include "route/route.hpp"
 #include "tcp_proxy.hpp"
@@ -61,129 +61,115 @@ public:
             route::add_route_ipapi(info);
         }
 
-        LWIPStack::getInstance().init(ioc_);
-        auto t_pcb = LWIPStack::getInstance().tcp_listen_any();
-        auto u_pcb = LWIPStack::getInstance().udp_listen_any();
+        lwip::instance().init(ioc_);
+        auto t_pcb = lwip::tcp_listen_any();
+        auto u_pcb = lwip::udp_listen_any();
 
-        LWIPStack::getInstance().lwip_tcp_arg(t_pcb, this);
+        lwip::lwip_tcp_accept(t_pcb,
+                              std::bind(&ip_layer_stack::on_tcp_accept,
+                                        this,
+                                        std::placeholders::_1,
+                                        std::placeholders::_2,
+                                        std::placeholders::_3));
+        lwip::lwip_udp_create(
+            std::bind(&ip_layer_stack::on_udp_create, this, std::placeholders::_1));
 
-        LWIPStack::getInstance()
-            .lwip_tcp_accept(t_pcb, [](void *arg, struct tcp_pcb *newpcb, err_t err) -> err_t {
-                if (err != ERR_OK || newpcb == NULL)
-                    return ERR_VAL;
+        lwip::instance().lwip_ip_output(std::bind(&ip_layer_stack::on_ip_output,
+                                                  this,
+                                                  std::placeholders::_1,
+                                                  std::placeholders::_2));
 
-                auto self = (ip_layer_stack *) arg;
-                return self->on_tcp_accept(newpcb);
-            });
-        LWIPStack::getInstance().lwip_udp_create([this](struct udp_pcb *newpcb) {
-            // Ports are always in host byte order.
-            auto src_port = newpcb->remote_port;
-            auto dest_port = newpcb->local_port;
-
-            network_layer::address_pair_type addr_pair;
-
-            if (newpcb->local_ip.type == IPADDR_TYPE_V4) {
-                // IP addresses are always in network order.
-                boost::asio::ip::address_v4 dest_ip(
-                    boost::asio::detail::socket_ops::network_to_host_long(
-                        newpcb->local_ip.u_addr.ip4.addr));
-                boost::asio::ip::address_v4 src_ip(
-                    boost::asio::detail::socket_ops::network_to_host_long(
-                        newpcb->remote_ip.u_addr.ip4.addr));
-
-                addr_pair = network_layer::address_pair_type(src_ip, dest_ip);
-
-            } else {
-                // IP addresses are always in network order.
-                boost::asio::ip::address_v6::bytes_type dest_ip;
-                boost::asio::ip::address_v6::bytes_type src_ip;
-
-                memcpy(dest_ip.data(), newpcb->local_ip.u_addr.ip6.addr, 16);
-                memcpy(src_ip.data(), newpcb->remote_ip.u_addr.ip6.addr, 16);
-
-                addr_pair = network_layer::address_pair_type(src_ip, dest_ip);
-            }
-            transport_layer::udp_endpoint_pair endpoint_pair(addr_pair, src_port, dest_port);
-
-            auto proxy = std::make_shared<udp_proxy>(ioc_, endpoint_pair, newpcb, *this);
-            proxy->start();
-        });
-        LWIPStack::getInstance().set_output_function(
-            [this](struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr) -> err_t {
-                auto buffer = toys::wrapper::pbuf_buffer::copy(p);
-                bool write_in_process = !send_queue_.empty();
-                send_queue_.push(buffer);
-                if (write_in_process)
-                    return ERR_OK;
-
-                boost::asio::co_spawn(
-                    ioc_,
-                    [this]() -> boost::asio::awaitable<void> {
-                        while (!send_queue_.empty()) {
-                            boost::system::error_code ec;
-                            const auto &buffer = send_queue_.front();
-                            auto bytes = co_await tuntap_.async_write_some(buffer.data(), ec);
-                            if (ec) {
-                                spdlog::warn("Write IP Packet to tuntap Device Failed: {0}",
-                                             ec.message());
-                                co_return;
-                            }
-                            if (bytes == 0) {
-                                boost::asio::steady_timer try_again_timer(
-                                    co_await boost::asio::this_coro::executor);
-                                try_again_timer.expires_from_now(std::chrono::milliseconds(64));
-                                co_await try_again_timer.async_wait(net_awaitable[ec]);
-                                if (ec)
-                                    break;
-                                continue;
-                            }
-                            send_queue_.pop();
-                        }
-                    },
-                    boost::asio::detached);
-
-                return ERR_OK;
-            });
-
-        boost::asio::co_spawn(tuntap_.get_io_context(), receive_ip_packet(), boost::asio::detached);
-        boost::asio::co_spawn(tuntap_.get_io_context(),
-                              lwip_check_timeouts(),
-                              boost::asio::detached);
-
+        boost::asio::co_spawn(ioc_, read_tun_ip_packet(), boost::asio::detached);
         ioc_.run();
     }
 
 private:
-    err_t on_tcp_accept(struct tcp_pcb *newpcb)
+    void on_udp_create(struct udp_pcb *newpcb)
     {
         // Ports are always in host byte order.
         auto src_port = newpcb->remote_port;
         auto dest_port = newpcb->local_port;
 
-        network_layer::address_pair_type addr_pair;
+        transport_layer::udp_endpoint_pair endpoint_pair(create_address_pair(newpcb->local_ip,
+                                                                             newpcb->remote_ip),
+                                                         src_port,
+                                                         dest_port);
 
-        if (newpcb->local_ip.type == IPADDR_TYPE_V4) {
+        auto proxy = std::make_shared<udp_proxy>(ioc_, endpoint_pair, newpcb, *this);
+        proxy->start();
+    }
+    err_t on_ip_output(struct netif *netif, struct pbuf *p)
+    {
+        auto buffer = toys::wrapper::pbuf_buffer::copy(p);
+        bool write_in_process = !send_queue_.empty();
+        send_queue_.push(buffer);
+        if (write_in_process)
+            return ERR_OK;
+
+        boost::asio::co_spawn(
+            ioc_,
+            [this]() -> boost::asio::awaitable<void> {
+                while (!send_queue_.empty()) {
+                    boost::system::error_code ec;
+                    const auto &buffer = send_queue_.front();
+                    auto bytes = co_await tuntap_.async_write_some(buffer.data(), ec);
+                    if (ec) {
+                        spdlog::warn("Write IP Packet to tuntap Device Failed: {0}", ec.message());
+                        co_return;
+                    }
+                    if (bytes == 0) {
+                        boost::asio::steady_timer try_again_timer(
+                            co_await boost::asio::this_coro::executor);
+                        try_again_timer.expires_from_now(std::chrono::milliseconds(64));
+                        co_await try_again_timer.async_wait(net_awaitable[ec]);
+                        if (ec)
+                            break;
+                        continue;
+                    }
+                    send_queue_.pop();
+                }
+            },
+            boost::asio::detached);
+
+        return ERR_OK;
+    }
+
+    inline static network_layer::address_pair_type create_address_pair(const ip_addr_t &local_ip,
+                                                                       const ip_addr_t &remote_ip)
+    {
+        if (local_ip.type == IPADDR_TYPE_V4) {
             // IP addresses are always in network order.
             boost::asio::ip::address_v4 dest_ip(
-                boost::asio::detail::socket_ops::network_to_host_long(
-                    newpcb->local_ip.u_addr.ip4.addr));
-            boost::asio::ip::address_v4 src_ip(boost::asio::detail::socket_ops::network_to_host_long(
-                newpcb->remote_ip.u_addr.ip4.addr));
+                boost::asio::detail::socket_ops::network_to_host_long(local_ip.u_addr.ip4.addr));
+            boost::asio::ip::address_v4 src_ip(
+                boost::asio::detail::socket_ops::network_to_host_long(remote_ip.u_addr.ip4.addr));
 
-            addr_pair = network_layer::address_pair_type(src_ip, dest_ip);
+            return network_layer::address_pair_type(src_ip, dest_ip);
 
         } else {
             // IP addresses are always in network order.
             boost::asio::ip::address_v6::bytes_type dest_ip;
             boost::asio::ip::address_v6::bytes_type src_ip;
 
-            memcpy(dest_ip.data(), newpcb->local_ip.u_addr.ip6.addr, 16);
-            memcpy(src_ip.data(), newpcb->remote_ip.u_addr.ip6.addr, 16);
+            memcpy(dest_ip.data(), local_ip.u_addr.ip6.addr, 16);
+            memcpy(src_ip.data(), remote_ip.u_addr.ip6.addr, 16);
 
-            addr_pair = network_layer::address_pair_type(src_ip, dest_ip);
+            return network_layer::address_pair_type(src_ip, dest_ip);
         }
+    }
+    err_t on_tcp_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
+    {
+        if (err != ERR_OK || newpcb == NULL)
+            return ERR_VAL;
 
-        transport_layer::tcp_endpoint_pair endpoint_pair(addr_pair, src_port, dest_port);
+        // Ports are always in host byte order.
+        auto src_port = newpcb->remote_port;
+        auto dest_port = newpcb->local_port;
+
+        transport_layer::tcp_endpoint_pair endpoint_pair(create_address_pair(newpcb->local_ip,
+                                                                             newpcb->remote_ip),
+                                                         src_port,
+                                                         dest_port);
 
         auto proxy = std::make_shared<transport_layer::tcp_proxy>(ioc_,
                                                                   newpcb,
@@ -193,7 +179,7 @@ private:
         return ERR_OK;
     }
 
-    boost::asio::awaitable<void> receive_ip_packet()
+    boost::asio::awaitable<void> read_tun_ip_packet()
     {
         for (;;) {
             boost::system::error_code ec;
@@ -204,21 +190,9 @@ private:
 
             buffer.realloc(bytes);
             pbuf_ref(&buffer);
-            LWIPStack::getInstance().lwip_ip_input(&buffer);
+            lwip::instance().lwip_ip_input(&buffer);
         }
     };
-    boost::asio::awaitable<void> lwip_check_timeouts()
-    {
-        for (;;) {
-            boost::system::error_code ec;
-            boost::asio::steady_timer update_timer(co_await boost::asio::this_coro::executor);
-            update_timer.expires_from_now(std::chrono::seconds(1));
-            co_await update_timer.async_wait(net_awaitable[ec]);
-            if (ec)
-                co_return;
-            LWIPStack::getInstance().lwip_sys_check_timeouts();
-        }
-    }
 
     boost::asio::awaitable<tcp_socket_ptr> create_proxy_socket(
         const transport_layer::tcp_endpoint_pair &endpoint_pair) override

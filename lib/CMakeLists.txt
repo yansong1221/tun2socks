@@ -45,7 +45,7 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks.cpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.h
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.cpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/lwipstack.h
+${CMAKE_CURRENT_SOURCE_DIR}/src/lwip.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/pbuf.hpp
 )
 if(APPLE)

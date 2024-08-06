@@ -2146,8 +2146,7 @@ tcp_err(struct tcp_pcb *pcb, std::function<std::remove_pointer<tcp_err_fn>::type
  * @param accept callback function to call for this pcb when LISTENing
  *        connection has been connected to another host
  */
-void
-tcp_accept(struct tcp_pcb *pcb, tcp_accept_fn accept)
+void tcp_accept(struct tcp_pcb *pcb, std::function<std::remove_pointer<tcp_accept_fn>::type> accept)
 {
 	LWIP_ASSERT_CORE_LOCKED();
 	if ((pcb != NULL) && (pcb->state == LISTEN)) {

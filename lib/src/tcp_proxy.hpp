@@ -3,7 +3,7 @@
 #include <spdlog/spdlog.h>
 
 #include "interface.hpp"
-#include "lwipstack.h"
+#include "lwip.hpp"
 #include "pbuf.hpp"
 #include "socks_client/socks_client.hpp"
 #include <queue>
@@ -20,7 +20,7 @@ public:
               struct tcp_pcb *pcb,
               transport_layer::tcp_endpoint_pair local_endpoint_pair,
               abstract::tun2socks &_tun2socks)
-        : strand_(ioc)
+        : ioc_(ioc)
         , pcb_(pcb)
         , local_endpoint_pair_(local_endpoint_pair)
         , tun2socks_(_tun2socks)
@@ -29,21 +29,21 @@ public:
 
     void start()
     {
-        LWIPStack::getInstance().lwip_tcp_receive(pcb_,
-                                                  std::bind(&tcp_proxy::on_recved,
-                                                            this,
-                                                            std::placeholders::_1,
-                                                            std::placeholders::_2,
-                                                            std::placeholders::_3,
-                                                            std::placeholders::_4));
-        LWIPStack::getInstance().lwip_tcp_sent(pcb_,
-                                               std::bind(&tcp_proxy::on_sent,
-                                                         this,
-                                                         std::placeholders::_1,
-                                                         std::placeholders::_2,
-                                                         std::placeholders::_3));
+        lwip::instance().lwip_tcp_receive(pcb_,
+                                          std::bind(&tcp_proxy::on_recved,
+                                                    this,
+                                                    std::placeholders::_1,
+                                                    std::placeholders::_2,
+                                                    std::placeholders::_3,
+                                                    std::placeholders::_4));
+        lwip::instance().lwip_tcp_sent(pcb_,
+                                       std::bind(&tcp_proxy::on_sent,
+                                                 this,
+                                                 std::placeholders::_1,
+                                                 std::placeholders::_2,
+                                                 std::placeholders::_3));
         boost::asio::co_spawn(
-            strand_.context(),
+            ioc_,
             [this, self = shared_from_this()]() mutable -> boost::asio::awaitable<void> {
                 boost::system::error_code ec;
                 socket_ = co_await tun2socks_.create_proxy_socket(local_endpoint_pair_);
@@ -100,23 +100,23 @@ private:
         if (!socket_)
             return ERR_MEM;
 
-        if (read_queue_.size() >= 10)
+        if (recved_queue_.size() >= 10)
             return ERR_MEM;
 
-        LWIPStack::getInstance().lwip_tcp_recved(tpcb, p->tot_len);
+        lwip::instance().lwip_tcp_recved(tpcb, p->tot_len);
 
         toys::wrapper::pbuf_buffer buffer(p, false);
-        bool write_in_process = !read_queue_.empty();
-        read_queue_.push_back(buffer);
+        bool write_in_process = !recved_queue_.empty();
+        recved_queue_.push_back(buffer);
         if (write_in_process)
             return ERR_OK;
 
         boost::asio::co_spawn(
-            strand_.context(),
+            ioc_,
             [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
-                while (!read_queue_.empty()) {
+                while (!recved_queue_.empty()) {
                     boost::system::error_code ec;
-                    const auto &buffer = read_queue_.front();
+                    const auto &buffer = recved_queue_.front();
                     auto bytes = co_await boost::asio::async_write(*socket_,
                                                                    buffer.data(),
                                                                    net_awaitable[ec]);
@@ -124,7 +124,7 @@ private:
                         do_close();
                         co_return;
                     }
-                    read_queue_.pop_front();
+                    recved_queue_.pop_front();
                 }
             },
             boost::asio::detached);
@@ -136,9 +136,9 @@ private:
     inline void do_close()
     {
         if (pcb_) {
-            LWIPStack::getInstance().lwip_tcp_sent(pcb_, nullptr);
-            LWIPStack::getInstance().lwip_tcp_receive(pcb_, nullptr);
-            LWIPStack::getInstance().lwip_tcp_close(pcb_);
+            lwip::instance().lwip_tcp_sent(pcb_, nullptr);
+            lwip::instance().lwip_tcp_receive(pcb_, nullptr);
+            lwip::instance().lwip_tcp_close(pcb_);
             pcb_ = nullptr;
         }
 
@@ -151,10 +151,10 @@ private:
     {
         while (pcb_ && !send_queue_.empty()) {
             const auto &buf = send_queue_.front().data();
-            err_t code = LWIPStack::getInstance().lwip_tcp_write(pcb_,
-                                                                 buf.data(),
-                                                                 buf.size(),
-                                                                 TCP_WRITE_FLAG_COPY);
+            err_t code = lwip::instance().lwip_tcp_write(pcb_,
+                                                            buf.data(),
+                                                            buf.size(),
+                                                            TCP_WRITE_FLAG_COPY);
             if (code == ERR_MEM) {
                 return;
             }
@@ -162,7 +162,7 @@ private:
                 do_close();
                 return;
             }
-            code = LWIPStack::getInstance().lwip_tcp_output(pcb_);
+            code = lwip::instance().lwip_tcp_output(pcb_);
             if (code != ERR_OK) {
                 do_close();
                 return;
@@ -173,13 +173,13 @@ private:
 
 private:
     struct tcp_pcb *pcb_;
-    boost::asio::io_context::strand strand_;
+    boost::asio::io_context &ioc_;
     abstract::tun2socks &tun2socks_;
     abstract::tun2socks::tcp_socket_ptr socket_;
 
     transport_layer::tcp_endpoint_pair local_endpoint_pair_;
 
-    std::list<toys::wrapper::pbuf_buffer> read_queue_;
+    std::list<toys::wrapper::pbuf_buffer> recved_queue_;
     std::list<toys::wrapper::pbuf_buffer> send_queue_;
 };
 } // namespace transport_layer
