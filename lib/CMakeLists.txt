@@ -33,18 +33,12 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/route/route.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/process_info/process_info.hpp
 
 
-${CMAKE_CURRENT_SOURCE_DIR}/src/buffer.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/interface.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/basic_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/misc.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/platform.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/address_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/endpoint_pair.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/checksum.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/ip_packet.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/udp_packet.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_packet.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/ip_layer_stack.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp
@@ -52,6 +46,7 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks.cpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.h
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.cpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/lwipstack.h
+${CMAKE_CURRENT_SOURCE_DIR}/src/pbuf.hpp
 )
 if(APPLE)
 	list(APPEND SRC_FILES

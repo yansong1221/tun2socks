@@ -1,15 +1,10 @@
 #pragma once
 #include "interface.hpp"
-#include "io_context_pool.hpp"
-#include "ip_packet.hpp"
-#include "lwip.hpp"
 #include "lwipstack.h"
 #include "process_info/process_info.hpp"
 #include "route/route.hpp"
-#include "tcp_packet.hpp"
-#include "tcp_proxy_ex.hpp"
+#include "tcp_proxy.hpp"
 #include "tuntap/tuntap.hpp"
-#include "udp_packet.hpp"
 #include "udp_proxy.hpp"
 #include <queue>
 
@@ -17,8 +12,7 @@ class ip_layer_stack : public abstract::tun2socks
 {
 public:
     explicit ip_layer_stack()
-        : tuntap_(pool_.getIOContext())
-        , ioc_(pool_.getIOContext())
+        : tuntap_(ioc_)
     {}
     void start()
     {
@@ -81,23 +75,85 @@ public:
                 auto self = (ip_layer_stack *) arg;
                 return self->on_tcp_accept(newpcb);
             });
+        LWIPStack::getInstance().lwip_udp_create([this](struct udp_pcb *newpcb) {
+            // Ports are always in host byte order.
+            auto src_port = newpcb->remote_port;
+            auto dest_port = newpcb->local_port;
 
+            network_layer::address_pair_type addr_pair;
+
+            if (newpcb->local_ip.type == IPADDR_TYPE_V4) {
+                // IP addresses are always in network order.
+                boost::asio::ip::address_v4 dest_ip(
+                    boost::asio::detail::socket_ops::network_to_host_long(
+                        newpcb->local_ip.u_addr.ip4.addr));
+                boost::asio::ip::address_v4 src_ip(
+                    boost::asio::detail::socket_ops::network_to_host_long(
+                        newpcb->remote_ip.u_addr.ip4.addr));
+
+                addr_pair = network_layer::address_pair_type(src_ip, dest_ip);
+
+            } else {
+                // IP addresses are always in network order.
+                boost::asio::ip::address_v6::bytes_type dest_ip;
+                boost::asio::ip::address_v6::bytes_type src_ip;
+
+                memcpy(dest_ip.data(), newpcb->local_ip.u_addr.ip6.addr, 16);
+                memcpy(src_ip.data(), newpcb->remote_ip.u_addr.ip6.addr, 16);
+
+                addr_pair = network_layer::address_pair_type(src_ip, dest_ip);
+            }
+            transport_layer::udp_endpoint_pair endpoint_pair(addr_pair, src_port, dest_port);
+
+            auto proxy = std::make_shared<udp_proxy>(ioc_, endpoint_pair, newpcb, *this);
+            proxy->start();
+        });
         LWIPStack::getInstance().set_output_function(
             [this](struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr) -> err_t {
-                buffer::ref_buffer buffer;
-                auto buf = buffer.prepare(p->tot_len);
-                pbuf_copy_partial(p, buf.data(), p->tot_len, 0);
-                buffer.commit(p->tot_len);
-                tuntap_.write_packet(buffer);
+                auto buffer = toys::wrapper::pbuf_buffer::copy(p);
+                bool write_in_process = !send_queue_.empty();
+                send_queue_.push(buffer);
+                if (write_in_process)
+                    return ERR_OK;
+
+                boost::asio::co_spawn(
+                    ioc_,
+                    [this]() -> boost::asio::awaitable<void> {
+                        while (!send_queue_.empty()) {
+                            boost::system::error_code ec;
+                            const auto &buffer = send_queue_.front();
+                            auto bytes = co_await tuntap_.async_write_some(buffer.data(), ec);
+                            if (ec) {
+                                spdlog::warn("Write IP Packet to tuntap Device Failed: {0}",
+                                             ec.message());
+                                co_return;
+                            }
+                            if (bytes == 0) {
+                                boost::asio::steady_timer try_again_timer(
+                                    co_await boost::asio::this_coro::executor);
+                                try_again_timer.expires_from_now(std::chrono::milliseconds(64));
+                                co_await try_again_timer.async_wait(net_awaitable[ec]);
+                                if (ec)
+                                    break;
+                                continue;
+                            }
+                            send_queue_.pop();
+                        }
+                    },
+                    boost::asio::detached);
+
                 return ERR_OK;
             });
 
         boost::asio::co_spawn(tuntap_.get_io_context(), receive_ip_packet(), boost::asio::detached);
+        boost::asio::co_spawn(tuntap_.get_io_context(),
+                              lwip_check_timeouts(),
+                              boost::asio::detached);
 
-        pool_.Start();
-        pool_.Wait();
+        ioc_.run();
     }
 
+private:
     err_t on_tcp_accept(struct tcp_pcb *newpcb)
     {
         // Ports are always in host byte order.
@@ -129,7 +185,7 @@ public:
 
         transport_layer::tcp_endpoint_pair endpoint_pair(addr_pair, src_port, dest_port);
 
-        auto proxy = std::make_shared<transport_layer::tcp_proxy>(pool_.getIOContext(),
+        auto proxy = std::make_shared<transport_layer::tcp_proxy>(ioc_,
                                                                   newpcb,
                                                                   endpoint_pair,
                                                                   *this);
@@ -141,85 +197,29 @@ public:
     {
         for (;;) {
             boost::system::error_code ec;
-            auto buffer = co_await tuntap_.read_packet(ec);
+            toys::wrapper::pbuf_buffer buffer(65532);
+            auto bytes = co_await tuntap_.async_read_some(buffer.data(), ec);
             if (ec)
                 co_return;
 
-            auto p = pbuf_alloc(pbuf_layer::PBUF_RAW, buffer.size(), pbuf_type::PBUF_REF);
-            p->payload = (void *) buffer.data().data();
-
-            LWIPStack::getInstance().lwip_ip_input(p);
+            buffer.realloc(bytes);
+            pbuf_ref(&buffer);
+            LWIPStack::getInstance().lwip_ip_input(&buffer);
         }
     };
-
-    void close_endpoint_pair(const transport_layer::udp_endpoint_pair &endpoint_pair) override
+    boost::asio::awaitable<void> lwip_check_timeouts()
     {
-        boost::asio::co_spawn(
-            ioc_,
-            [this, endpoint_pair]() -> boost::asio::awaitable<void> {
-                udp_proxy_map_.erase(endpoint_pair);
+        for (;;) {
+            boost::system::error_code ec;
+            boost::asio::steady_timer update_timer(co_await boost::asio::this_coro::executor);
+            update_timer.expires_from_now(std::chrono::seconds(1));
+            co_await update_timer.async_wait(net_awaitable[ec]);
+            if (ec)
                 co_return;
-            },
-            boost::asio::detached);
+            LWIPStack::getInstance().lwip_sys_check_timeouts();
+        }
     }
-    void write_tun_packet(const buffer::ref_const_buffer &buffers) override
-    {
-        tuntap_.write_packet(buffers);
-    }
-    void write_tun_packet(const transport_layer::tcp_packet &pack) override
-    {
-        boost::asio::co_spawn(
-            ioc_,
-            [this, pack]() -> boost::asio::awaitable<void> {
-                buffer::ref_buffer buffers;
 
-                auto ip_header_len = network_layer::ip_packet::make_ip_header_packet_len(
-                    pack.endpoint_pair().to_address_pair());
-                auto tcp_header_len = transport_layer::tcp_packet::make_tcp_header_packet_len();
-                auto tcp_payload_len = pack.payload().size();
-                auto total_len = ip_header_len + tcp_header_len + tcp_payload_len;
-
-                auto p = buffers.prepare(total_len);
-
-                network_layer::ip_packet::make_ip_header_packet(p,
-                                                                pack.endpoint_pair()
-                                                                    .to_address_pair(),
-                                                                transport_layer::tcp_packet::protocol,
-                                                                tcp_header_len + tcp_payload_len);
-                p += ip_header_len;
-
-                transport_layer::tcp_packet::make_ip_header_packet(p,
-                                                                   pack.endpoint_pair(),
-                                                                   pack.header_data(),
-                                                                   pack.payload());
-                p += tcp_header_len;
-
-                boost::asio::buffer_copy(p, pack.payload());
-
-                buffers.commit(total_len);
-
-                tuntap_.write_packet(buffers);
-                co_return;
-            },
-            boost::asio::detached);
-    }
-    void write_tun_packet(const transport_layer::udp_packet &pack) override
-    {
-        boost::asio::co_spawn(
-            ioc_,
-            [this, pack]() -> boost::asio::awaitable<void> {
-                buffer::ref_buffer payload;
-                pack.make_packet(payload.prepare(pack.raw_packet_size()));
-                payload.commit(pack.raw_packet_size());
-
-                network_layer::ip_packet ip_pack(pack.endpoint_pair().to_address_pair(),
-                                                 transport_layer::udp_packet::protocol,
-                                                 payload);
-                write_ip_packet(ip_pack);
-                co_return;
-            },
-            boost::asio::detached);
-    }
     boost::asio::awaitable<tcp_socket_ptr> create_proxy_socket(
         const transport_layer::tcp_endpoint_pair &endpoint_pair) override
     {
@@ -330,14 +330,6 @@ public:
         }
         co_return socket;
     }
-    void write_ip_packet(const network_layer::ip_packet &ip_pack)
-    {
-        buffer::ref_buffer buffer;
-        ip_pack.make_packet(buffer.prepare(ip_pack.raw_packet_size()));
-        buffer.commit(ip_pack.raw_packet_size());
-
-        tuntap_.write_packet(buffer);
-    }
 
 private:
     template<typename Stream, typename InternetProtocol>
@@ -353,42 +345,9 @@ private:
         if (ec)
             spdlog::error("bind {0}", ec.message());
     }
-    void on_udp_packet(const network_layer::ip_packet &ip_pack)
-    {
-        auto udp_pack = transport_layer::udp_packet::from_ip_packet(ip_pack);
-        if (!udp_pack)
-            return;
-
-        auto endpoint_pair = udp_pack->endpoint_pair();
-        auto proxy = udp_proxy_map_[endpoint_pair];
-        if (!proxy) {
-            proxy = std::make_shared<udp_proxy>(pool_.getIOContext(), endpoint_pair, *this);
-            proxy->start();
-            udp_proxy_map_[endpoint_pair] = proxy;
-        }
-        proxy->on_udp_packet(*udp_pack);
-    }
-    //void on_tcp_packet(const network_layer::ip_packet &ip_pack)
-    //{
-    //    auto tcp_pack = transport_layer::tcp_packet::from_ip_packet(ip_pack);
-    //    if (!tcp_pack)
-    //        return;
-
-    //    auto endpoint_pair = tcp_pack->endpoint_pair();
-
-    //    auto proxy = tcp_proxy_map_[endpoint_pair];
-    //    if (!proxy) {
-    //        proxy = std::make_shared<transport_layer::tcp_proxy>(pool_.getIOContext(),
-    //                                                             endpoint_pair,
-    //                                                             *this);
-    //        tcp_proxy_map_[endpoint_pair] = proxy;
-    //    }
-    //    proxy->on_tcp_packet(*tcp_pack);
-    //}
 
 private:
-    toys::pool::IOContextPool<1, 1> pool_;
-    boost::asio::io_context &ioc_;
+    boost::asio::io_context ioc_;
 
     tuntap::tuntap tuntap_;
 
@@ -397,5 +356,5 @@ private:
 
     boost::asio::ip::tcp::endpoint socks5_endpoint_;
 
-    std::unordered_map<transport_layer::udp_endpoint_pair, udp_proxy::ptr> udp_proxy_map_;
+    std::queue<toys::wrapper::pbuf_buffer> send_queue_;
 };

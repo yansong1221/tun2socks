@@ -1,16 +1,11 @@
 #pragma once
-#include "tcp_packet.hpp"
-#include "udp_packet.hpp"
+#include "endpoint_pair.hpp"
 
 namespace abstract {
 class tun2socks
 {
 public:
     virtual ~tun2socks() = default;
-    virtual void write_tun_packet(const transport_layer::tcp_packet &pack) = 0;
-    virtual void write_tun_packet(const transport_layer::udp_packet &pack) = 0;
-    virtual void write_tun_packet(const buffer::ref_const_buffer &buffers) = 0;
-    virtual void close_endpoint_pair(const transport_layer::udp_endpoint_pair &endpoint_pair) = 0;
 
     using tcp_socket_ptr = std::shared_ptr<boost::asio::ip::tcp::socket>;
     using udp_socket_ptr = std::shared_ptr<boost::asio::ip::udp::socket>;

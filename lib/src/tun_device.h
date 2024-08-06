@@ -1,5 +1,4 @@
 #pragma once
-#include "io_context_pool.hpp"
 #include "ip_layer_stack.hpp"
 #include "tuntap/tuntap.hpp"
 #include <boost/asio.hpp>
