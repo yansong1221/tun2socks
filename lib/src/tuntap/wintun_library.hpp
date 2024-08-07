@@ -328,15 +328,11 @@ public:
     }
     inline std::shared_ptr<adapter> create_adapter(const tuntap::tun_parameter &param)
     {
-        WintunDeleteDriver();
         std::wstring utf16_name = misc::utf8_utf16(param.tun_name);
         std::wstring utf16_tunnel_type = misc::utf8_utf16(param.tun_name);
 
-        /*details::utf8_utf16(_name, utf16_name);
-        details::utf8_utf16(_tunnel_type, utf16_tunnel_type);*/
-
         GUID ExampleGuid = {0xdeadbabf,
-                            0xcafe,
+                            0xcefe,
                             0xbeef,
                             {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}};
         auto _adapter = WintunCreateAdapter(utf16_name.c_str(),

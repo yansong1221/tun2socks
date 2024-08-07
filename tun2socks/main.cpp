@@ -9,5 +9,6 @@ int main(int argc, char **argv)
 
     std::locale::global(std::locale("en_US.UTF-8"));
     tun2socks tun2socks_;
+    tun2socks_.start();
     return 0;
 }

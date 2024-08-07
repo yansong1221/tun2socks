@@ -29,19 +29,19 @@ public:
 
     void start()
     {
-        lwip::instance().lwip_tcp_receive(pcb_,
-                                          std::bind(&tcp_proxy::on_recved,
-                                                    this,
-                                                    std::placeholders::_1,
-                                                    std::placeholders::_2,
-                                                    std::placeholders::_3,
-                                                    std::placeholders::_4));
-        lwip::instance().lwip_tcp_sent(pcb_,
-                                       std::bind(&tcp_proxy::on_sent,
-                                                 this,
-                                                 std::placeholders::_1,
-                                                 std::placeholders::_2,
-                                                 std::placeholders::_3));
+        lwip::lwip_tcp_receive(pcb_,
+                               std::bind(&tcp_proxy::on_recved,
+                                         this,
+                                         std::placeholders::_1,
+                                         std::placeholders::_2,
+                                         std::placeholders::_3,
+                                         std::placeholders::_4));
+        lwip::lwip_tcp_sent(pcb_,
+                            std::bind(&tcp_proxy::on_sent,
+                                      this,
+                                      std::placeholders::_1,
+                                      std::placeholders::_2,
+                                      std::placeholders::_3));
         boost::asio::co_spawn(
             ioc_,
             [this, self = shared_from_this()]() mutable -> boost::asio::awaitable<void> {
@@ -136,9 +136,9 @@ private:
     inline void do_close()
     {
         if (pcb_) {
-            lwip::instance().lwip_tcp_sent(pcb_, nullptr);
-            lwip::instance().lwip_tcp_receive(pcb_, nullptr);
-            lwip::instance().lwip_tcp_close(pcb_);
+            lwip::lwip_tcp_sent(pcb_, nullptr);
+            lwip::lwip_tcp_receive(pcb_, nullptr);
+            lwip::lwip_tcp_close(pcb_);
             pcb_ = nullptr;
         }
 
@@ -151,10 +151,7 @@ private:
     {
         while (pcb_ && !send_queue_.empty()) {
             const auto &buf = send_queue_.front().data();
-            err_t code = lwip::instance().lwip_tcp_write(pcb_,
-                                                            buf.data(),
-                                                            buf.size(),
-                                                            TCP_WRITE_FLAG_COPY);
+            err_t code = lwip::lwip_tcp_write(pcb_, buf.data(), buf.size(), TCP_WRITE_FLAG_COPY);
             if (code == ERR_MEM) {
                 return;
             }

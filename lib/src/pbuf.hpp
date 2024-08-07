@@ -45,11 +45,14 @@ public:
     pbuf *operator&() { return data_; }
     operator bool() { return data_ != nullptr; }
 
-    static pbuf_buffer copy(pbuf *p)
+    static pbuf_buffer smart_copy(pbuf *p)
     {
-        pbuf_buffer buffer(p->tot_len);
-        pbuf_copy(&buffer, p);
-        return buffer;
+        if (p->next) {
+            pbuf_buffer buffer(p->tot_len);
+            pbuf_copy(&buffer, p);
+            return buffer;
+        }
+        return pbuf_buffer(p);
     }
 
     void realloc(std::size_t n) { pbuf_realloc(data_, n); }

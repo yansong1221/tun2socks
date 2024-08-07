@@ -40,11 +40,9 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/address_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/endpoint_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_proxy.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/ip_layer_stack.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks_impl.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks.cpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.h
-${CMAKE_CURRENT_SOURCE_DIR}/src/tun_device.cpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/lwip.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/pbuf.hpp
 )

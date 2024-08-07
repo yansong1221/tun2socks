@@ -8,14 +8,18 @@
 #include "udp_proxy.hpp"
 #include <queue>
 
-class ip_layer_stack : public abstract::tun2socks
+class tun2socks_impl : public abstract::tun2socks
 {
 public:
-    explicit ip_layer_stack()
+    explicit tun2socks_impl()
         : tuntap_(ioc_)
     {}
     void start()
     {
+        socks5_endpoint_ = boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::from_string(
+                                                              "192.168.101.8"),
+                                                          7897);
+
         tuntap::tun_parameter param;
         param.tun_name = "mate";
 
@@ -66,15 +70,15 @@ public:
         auto u_pcb = lwip::udp_listen_any();
 
         lwip::lwip_tcp_accept(t_pcb,
-                              std::bind(&ip_layer_stack::on_tcp_accept,
+                              std::bind(&tun2socks_impl::on_tcp_accept,
                                         this,
                                         std::placeholders::_1,
                                         std::placeholders::_2,
                                         std::placeholders::_3));
         lwip::lwip_udp_create(
-            std::bind(&ip_layer_stack::on_udp_create, this, std::placeholders::_1));
+            std::bind(&tun2socks_impl::on_udp_create, this, std::placeholders::_1));
 
-        lwip::instance().lwip_ip_output(std::bind(&ip_layer_stack::on_ip_output,
+        lwip::instance().lwip_ip_output(std::bind(&tun2socks_impl::on_ip_output,
                                                   this,
                                                   std::placeholders::_1,
                                                   std::placeholders::_2));
@@ -84,6 +88,8 @@ public:
     }
 
 private:
+    inline bool is_direct_port(uint16_t src_port) { return true; }
+
     void on_udp_create(struct udp_pcb *newpcb)
     {
         // Ports are always in host byte order.
@@ -100,7 +106,7 @@ private:
     }
     err_t on_ip_output(struct netif *netif, struct pbuf *p)
     {
-        auto buffer = toys::wrapper::pbuf_buffer::copy(p);
+        auto buffer = toys::wrapper::pbuf_buffer::smart_copy(p);
         bool write_in_process = !send_queue_.empty();
         send_queue_.push(buffer);
         if (write_in_process)
@@ -201,12 +207,11 @@ private:
 
         auto port_info = process_info::get_process_info(endpoint_pair.src.port());
 
-        boost::system::error_code ec;
-
         auto socket = std::make_shared<boost::asio::ip::tcp::socket>(
             co_await boost::asio::this_coro::executor);
 
-        if (true) {
+        if (is_direct_port(endpoint_pair.src.port())) {
+            boost::system::error_code ec;
             open_bind_socket(*socket, endpoint_pair.dest, ec);
             if (ec)
                 co_return nullptr;
@@ -220,6 +225,7 @@ private:
             }
 
         } else {
+            boost::system::error_code ec;
             open_bind_socket(*socket, socks5_endpoint_, ec);
             if (ec)
                 co_return nullptr;
@@ -232,18 +238,22 @@ private:
                              socks5_endpoint_.port());
                 co_return nullptr;
             }
-            proxy::socks_client_option op;
-            op.target_host = endpoint_pair.dest.address().to_string();
-            op.target_port = endpoint_pair.dest.port();
-            op.proxy_hostname = false;
 
-            boost::asio::ip::tcp::endpoint remote_endp;
-            co_await proxy::async_socks_handshake(*socket, op, remote_endp, ec);
-            if (ec) {
-                spdlog::warn("can't connect socks5 server [{0}]:{1}",
-                             socks5_endpoint_.address().to_string(),
-                             socks5_endpoint_.port());
-                co_return nullptr;
+            {
+                proxy::socks_client_option op;
+                op.target_host = endpoint_pair.dest.address().to_string();
+                op.target_port = endpoint_pair.dest.port();
+                op.proxy_hostname = false;
+
+                boost::asio::ip::tcp::endpoint remote_endp;
+                auto ec = co_await proxy::async_socks_handshake(*socket, op, remote_endp);
+                if (ec) {
+                    spdlog::warn("can't connect socks5 server [{0}]:{1} message:{2}",
+                                 socks5_endpoint_.address().to_string(),
+                                 socks5_endpoint_.port(),
+                                 ec.message());
+                    co_return nullptr;
+                }
             }
         }
         co_return socket;
@@ -264,7 +274,7 @@ private:
         auto socket = std::make_shared<boost::asio::ip::udp::socket>(
             co_await boost::asio::this_coro::executor);
 
-        if (true) {
+        if (is_direct_port(endpoint_pair.src.port())) {
             open_bind_socket(*socket, endpoint_pair.dest, ec);
             if (ec)
                 co_return nullptr;
@@ -283,24 +293,26 @@ private:
                              socks5_endpoint_.port());
                 co_return nullptr;
             }
-            proxy::socks_client_option op;
-            op.target_host = endpoint_pair.dest.address().to_string();
-            op.target_port = endpoint_pair.dest.port();
-            op.proxy_hostname = false;
+            {
+                proxy::socks_client_option op;
+                op.target_host = endpoint_pair.dest.address().to_string();
+                op.target_port = endpoint_pair.dest.port();
+                op.proxy_hostname = false;
 
-            boost::asio::ip::udp::endpoint remote_endp;
-            co_await proxy::async_socks_handshake(proxy_sock, op, remote_endp, ec);
-            if (ec) {
-                spdlog::warn("can't connect socks5 server [{0}]:{1}",
-                             socks5_endpoint_.address().to_string(),
-                             socks5_endpoint_.port());
-                co_return nullptr;
+                boost::asio::ip::udp::endpoint remote_endp;
+                auto ec = co_await proxy::async_socks_handshake(proxy_sock, op, remote_endp);
+                if (ec) {
+                    spdlog::warn("can't connect socks5 server [{0}]:{1}",
+                                 socks5_endpoint_.address().to_string(),
+                                 socks5_endpoint_.port());
+                    co_return nullptr;
+                }
+                open_bind_socket(*socket, proxy_endpoint, ec);
+                if (ec)
+                    co_return nullptr;
+
+                proxy_endpoint = remote_endp;
             }
-            open_bind_socket(*socket, proxy_endpoint, ec);
-            if (ec)
-                co_return nullptr;
-
-            proxy_endpoint = remote_endp;
         }
         co_return socket;
     }

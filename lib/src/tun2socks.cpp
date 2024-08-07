@@ -1,7 +1,15 @@
+#include "tun2socks_impl.hpp"
 #include <tun2socks/tun2socks.h>
-#include "tun_device.h"
 
- tun2socks::tun2socks() 
- {
-    tun_device device;
- }
+tun2socks::tun2socks()
+{
+    impl_ = new tun2socks_impl();
+}
+tun2socks ::~tun2socks()
+{
+    delete impl_;
+}
+void tun2socks::start()
+{
+    impl_->start();
+}

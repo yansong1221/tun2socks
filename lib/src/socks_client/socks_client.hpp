@@ -194,10 +194,10 @@ net::awaitable<void> do_socks5(Stream &socket,
 
     if constexpr (std::is_same_v<InternetProtocol, net::ip::udp>)
         write<uint8_t>(SOCKS5_CMD_UDP, req); // CONNECT command.
-    else if constexpr (std::is_same_v<InternetProtocol, net::ip::udp>)
+    else if constexpr (std::is_same_v<InternetProtocol, net::ip::tcp>)
         write<uint8_t>(SOCKS_CMD_CONNECT, req);
     else
-        static_assert("unknown protocol");
+        static_assert(!std::is_same_v<InternetProtocol, InternetProtocol>, "unknown protocol");
 
     write<uint8_t>(0, req); // reserved.
 
@@ -461,11 +461,10 @@ net::awaitable<void> do_socks4(Stream &socket,
 }
 
 template<typename Stream, typename InternetProtocol>
-net::awaitable<void> do_socks_handshake(Stream &socket,
-                                        socks_client_option opt,
-                                        net::ip::basic_endpoint<InternetProtocol> &edp,
-                                        boost::system::error_code &ec)
+net::awaitable<boost::system::error_code> do_socks_handshake(
+    Stream &socket, socks_client_option opt, net::ip::basic_endpoint<InternetProtocol> &edp)
 {
+    boost::system::error_code ec;
     if (opt.version == socks5_version) {
         co_await do_socks5(socket, opt, edp, ec);
     } else if (opt.version == socks4_version || opt.version == socks4a_version) {
@@ -473,16 +472,15 @@ net::awaitable<void> do_socks_handshake(Stream &socket,
     } else {
         ec = proxy::errc::socks_unsupported_version;
     }
+    co_return ec;
 }
 
 } // namespace detail
 template<typename Stream, typename InternetProtocol>
-net::awaitable<void> async_socks_handshake(Stream &socket,
-                                           socks_client_option opt,
-                                           net::ip::basic_endpoint<InternetProtocol> &edp,
-                                           boost::system::error_code &ec)
+net::awaitable<boost::system::error_code> async_socks_handshake(
+    Stream &socket, socks_client_option opt, net::ip::basic_endpoint<InternetProtocol> &edp)
 {
-    return detail::do_socks_handshake(socket, opt, edp, ec);
+    return detail::do_socks_handshake(socket, opt, edp);
 }
 
 } // namespace proxy
