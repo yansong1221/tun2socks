@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lwip/src/include/)
 add_subdirectory(lwip)
 
-find_package(Boost REQUIRED COMPONENTS asio)
+find_package(Boost REQUIRED COMPONENTS asio url)
 find_package(spdlog CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 
@@ -45,6 +45,8 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks.cpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/lwip.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/pbuf.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/proxy_policy.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/network_monitor.hpp
 )
 if(APPLE)
 	list(APPEND SRC_FILES
@@ -75,7 +77,7 @@ target_include_directories(${MODULE}
 )
 
 target_link_libraries(${MODULE} 
-PRIVATE Boost::asio
+PRIVATE Boost::asio Boost::url
 PRIVATE spdlog::spdlog fmt::fmt
 PUBLIC lwipcore
 )

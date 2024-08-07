@@ -4,9 +4,9 @@
 
 #include "basic_tuntap.hpp"
 #ifdef OS_WINDOWS
-#include "wintun_service.hpp"
+#    include "wintun_service.hpp"
 #elif defined(OS_MACOS)
-#include "tun_service_mac.hpp"
+#    include "tun_service_mac.hpp"
 #endif
 
 namespace tuntap {
@@ -17,4 +17,4 @@ using tuntap = basic_tuntap<wintun_service>;
 using tuntap = basic_tuntap<tun_service_mac>;
 #endif
 
-} // namespace tuntap
+}  // namespace tuntap
