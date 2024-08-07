@@ -1,5 +1,5 @@
 #pragma once
-#include "platform.hpp"
+#include <tun2socks/platform.h>
 
 #include <boost/asio.hpp>
 #include <optional>
@@ -34,4 +34,6 @@ inline bool del_route_ipapi(const route_ipv6& r);
 }  // namespace route
 #if defined(OS_WINDOWS)
 #    include "route_win32.hpp"
+#elif defined(OS_MACOS)
+#    include "route_mac.hpp"
 #endif

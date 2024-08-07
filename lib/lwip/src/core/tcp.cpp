@@ -771,7 +771,7 @@ tcp_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port)
 	}
 	pcb->local_port = port;
 	TCP_REG(&tcp_bound_pcbs, pcb);
-	LWIP_DEBUGF(TCP_DEBUG, ("tcp_bind: bind to port %"U16_F"\n", port));
+	LWIP_DEBUGF(TCP_DEBUG, ("tcp_bind: bind to port %" U16_F "\n", port));
 	return ERR_OK;
 }
 
@@ -1033,7 +1033,7 @@ tcp_recved(struct tcp_pcb *pcb, u16_t len)
 		tcp_output(pcb);
 	}
 
-	LWIP_DEBUGF(TCP_DEBUG, ("tcp_recved: received %"U16_F" bytes, wnd %"TCPWNDSIZE_F" (%"TCPWNDSIZE_F").\n",
+	LWIP_DEBUGF(TCP_DEBUG, ("tcp_recved: received %" U16_F " bytes, wnd %" TCPWNDSIZE_F " (%" TCPWNDSIZE_F ").\n",
 		len, pcb->rcv_wnd, (u16_t)(TCP_WND_MAX(pcb) - pcb->rcv_wnd)));
 }
 
@@ -1114,7 +1114,7 @@ tcp_connect(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port,
 
 	LWIP_ERROR("tcp_connect: can only connect from state CLOSED", pcb->state == CLOSED, return ERR_ISCONN);
 
-	LWIP_DEBUGF(TCP_DEBUG, ("tcp_connect to port %"U16_F"\n", port));
+	LWIP_DEBUGF(TCP_DEBUG, ("tcp_connect to port %" U16_F "\n", port));
 	ip_addr_set(&pcb->remote_ip, ipaddr);
 	pcb->remote_port = port;
 
@@ -1316,8 +1316,8 @@ tcp_slowtmr_start:
 
 				if (pcb->rtime >= pcb->rto) {
 					/* Time for a retransmission. */
-					LWIP_DEBUGF(TCP_RTO_DEBUG, ("tcp_slowtmr: rtime %"S16_F
-						" pcb->rto %"S16_F"\n",
+					LWIP_DEBUGF(TCP_RTO_DEBUG, ("tcp_slowtmr: rtime %" S16_F 
+						" pcb->rto %" S16_F "\n",
 						pcb->rtime, pcb->rto));
 					/* If prepare phase fails but we have unsent data but no unacked data,
 					   still execute the backoff calculations below, as this means we somehow
@@ -1341,8 +1341,8 @@ tcp_slowtmr_start:
 							pcb->ssthresh = (tcpwnd_size_t)(pcb->mss << 1);
 						}
 						pcb->cwnd = pcb->mss;
-						LWIP_DEBUGF(TCP_CWND_DEBUG, ("tcp_slowtmr: cwnd %"TCPWNDSIZE_F
-							" ssthresh %"TCPWNDSIZE_F"\n",
+						LWIP_DEBUGF(TCP_CWND_DEBUG, ("tcp_slowtmr: cwnd %" TCPWNDSIZE_F 
+							" ssthresh %" TCPWNDSIZE_F "\n",
 							pcb->cwnd, pcb->ssthresh));
 						pcb->bytes_acked = 0;
 
@@ -1789,7 +1789,7 @@ tcp_kill_prio(u8_t prio)
 		}
 	}
 	if (inactive != NULL) {
-		LWIP_DEBUGF(TCP_DEBUG, ("tcp_kill_prio: killing oldest PCB %p (%"S32_F")\n",
+		LWIP_DEBUGF(TCP_DEBUG, ("tcp_kill_prio: killing oldest PCB %p (%" S32_F ")\n",
 			(void *)inactive, inactivity));
 		tcp_abort(inactive);
 	}
@@ -1820,7 +1820,7 @@ tcp_kill_state(enum tcp_state state)
 		}
 	}
 	if (inactive != NULL) {
-		LWIP_DEBUGF(TCP_DEBUG, ("tcp_kill_closing: killing oldest %s PCB %p (%"S32_F")\n",
+		LWIP_DEBUGF(TCP_DEBUG, ("tcp_kill_closing: killing oldest %s PCB %p (%" S32_F ")\n",
 			tcp_state_str[state], (void *)inactive, inactivity));
 		/* Don't send a RST, since no data is lost. */
 		tcp_abandon(inactive, 0);
@@ -1847,7 +1847,7 @@ tcp_kill_timewait(void)
 		}
 	}
 	if (inactive != NULL) {
-		LWIP_DEBUGF(TCP_DEBUG, ("tcp_kill_timewait: killing oldest TIME-WAIT PCB %p (%"S32_F")\n",
+		LWIP_DEBUGF(TCP_DEBUG, ("tcp_kill_timewait: killing oldest TIME-WAIT PCB %p (%" S32_F ")\n",
 			(void *)inactive, inactivity));
 		tcp_abort(inactive);
 	}
@@ -2481,16 +2481,16 @@ tcp_debug_print(struct tcp_hdr *tcphdr)
 {
 	LWIP_DEBUGF(TCP_DEBUG, ("TCP header:\n"));
 	LWIP_DEBUGF(TCP_DEBUG, ("+-------------------------------+\n"));
-	LWIP_DEBUGF(TCP_DEBUG, ("|    %5"U16_F"      |    %5"U16_F"      | (src port, dest port)\n",
+	LWIP_DEBUGF(TCP_DEBUG, ("|    %5" U16_F "      |    %5" U16_F "      | (src port, dest port)\n",
 		lwip_ntohs(tcphdr->src), lwip_ntohs(tcphdr->dest)));
 	LWIP_DEBUGF(TCP_DEBUG, ("+-------------------------------+\n"));
-	LWIP_DEBUGF(TCP_DEBUG, ("|           %010"U32_F"          | (seq no)\n",
+	LWIP_DEBUGF(TCP_DEBUG, ("|           %010" U32_F "          | (seq no)\n",
 		lwip_ntohl(tcphdr->seqno)));
 	LWIP_DEBUGF(TCP_DEBUG, ("+-------------------------------+\n"));
-	LWIP_DEBUGF(TCP_DEBUG, ("|           %010"U32_F"          | (ack no)\n",
+	LWIP_DEBUGF(TCP_DEBUG, ("|           %010" U32_F "          | (ack no)\n",
 		lwip_ntohl(tcphdr->ackno)));
 	LWIP_DEBUGF(TCP_DEBUG, ("+-------------------------------+\n"));
-	LWIP_DEBUGF(TCP_DEBUG, ("| %2"U16_F" |   |%"U16_F"%"U16_F"%"U16_F"%"U16_F"%"U16_F"%"U16_F"|     %5"U16_F"     | (hdrlen, flags (",
+	LWIP_DEBUGF(TCP_DEBUG, ("| %2" U16_F " |   |%" U16_F "%" U16_F "%" U16_F "%" U16_F "%" U16_F "%" U16_F "|     %5" U16_F "     | (hdrlen, flags (",
 		TCPH_HDRLEN(tcphdr),
 		(u16_t)(TCPH_FLAGS(tcphdr) >> 5 & 1),
 		(u16_t)(TCPH_FLAGS(tcphdr) >> 4 & 1),
@@ -2502,7 +2502,7 @@ tcp_debug_print(struct tcp_hdr *tcphdr)
 	tcp_debug_print_flags(TCPH_FLAGS(tcphdr));
 	LWIP_DEBUGF(TCP_DEBUG, ("), win)\n"));
 	LWIP_DEBUGF(TCP_DEBUG, ("+-------------------------------+\n"));
-	LWIP_DEBUGF(TCP_DEBUG, ("|    0x%04"X16_F"     |     %5"U16_F"     | (chksum, urgp)\n",
+	LWIP_DEBUGF(TCP_DEBUG, ("|    0x%04" X16_F "     |     %5" U16_F "     | (chksum, urgp)\n",
 		lwip_ntohs(tcphdr->chksum), lwip_ntohs(tcphdr->urgp)));
 	LWIP_DEBUGF(TCP_DEBUG, ("+-------------------------------+\n"));
 }
@@ -2564,7 +2564,7 @@ tcp_debug_print_pcbs(void)
 
 	LWIP_DEBUGF(TCP_DEBUG, ("Active PCB states:\n"));
 	for (pcb = tcp_active_pcbs; pcb != NULL; pcb = pcb->next) {
-		LWIP_DEBUGF(TCP_DEBUG, ("Local port %"U16_F", foreign port %"U16_F" snd_nxt %"U32_F" rcv_nxt %"U32_F" ",
+		LWIP_DEBUGF(TCP_DEBUG, ("Local port %" U16_F ", foreign port %" U16_F " snd_nxt %" U32_F " rcv_nxt %" U32_F " ",
 			pcb->local_port, pcb->remote_port,
 			pcb->snd_nxt, pcb->rcv_nxt));
 		tcp_debug_print_state(pcb->state);
@@ -2572,13 +2572,13 @@ tcp_debug_print_pcbs(void)
 
 	LWIP_DEBUGF(TCP_DEBUG, ("Listen PCB states:\n"));
 	for (pcbl = tcp_listen_pcbs.listen_pcbs; pcbl != NULL; pcbl = pcbl->next) {
-		LWIP_DEBUGF(TCP_DEBUG, ("Local port %"U16_F" ", pcbl->local_port));
+		LWIP_DEBUGF(TCP_DEBUG, ("Local port %" U16_F " ", pcbl->local_port));
 		tcp_debug_print_state(pcbl->state);
 	}
 
 	LWIP_DEBUGF(TCP_DEBUG, ("TIME-WAIT PCB states:\n"));
 	for (pcb = tcp_tw_pcbs; pcb != NULL; pcb = pcb->next) {
-		LWIP_DEBUGF(TCP_DEBUG, ("Local port %"U16_F", foreign port %"U16_F" snd_nxt %"U32_F" rcv_nxt %"U32_F" ",
+		LWIP_DEBUGF(TCP_DEBUG, ("Local port %" U16_F ", foreign port %" U16_F " snd_nxt %" U32_F " rcv_nxt %" U32_F " ",
 			pcb->local_port, pcb->remote_port,
 			pcb->snd_nxt, pcb->rcv_nxt));
 		tcp_debug_print_state(pcb->state);

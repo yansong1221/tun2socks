@@ -16,6 +16,7 @@ add_library(${MODULE})
 
 SET(HEADER_FILES
 ${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/tun2socks.h
+${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/platform.h
 )
 
 SET(SRC_FILES
@@ -35,7 +36,6 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/process_info/process_info.hpp
 
 ${CMAKE_CURRENT_SOURCE_DIR}/src/interface.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/misc.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/platform.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/address_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/endpoint_pair.hpp

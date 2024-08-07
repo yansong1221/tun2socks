@@ -214,7 +214,7 @@ public:
         : boost::asio::detail::service_base<tun_service_mac>(ioc)
         , stream_descriptor_(ioc)
     {}
-    void open(const tuntap::tun_parameter& param)
+    void open(const tuntap::tun_parameter& param, boost::system::error_code& ec)
     {
         struct ifreq ifr;
         struct ifaddrs *ifa;

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "platform.hpp"
+#include <tun2socks/platform.h>
 
 #include "basic_tuntap.hpp"
 #ifdef OS_WINDOWS

@@ -1,6 +1,7 @@
 #pragma once
 #include <optional>
 #include <string>
+#include <tun2socks/platform.h>
 
 class tun2socks_impl;
 class tun2socks {

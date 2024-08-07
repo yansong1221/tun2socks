@@ -91,7 +91,7 @@ private:
         toys::wrapper::pbuf_buffer buffer(p, false);
 
         bool write_in_process = !send_queue_.empty();
-        send_queue_.push_back(buffer);
+        send_queue_.push(buffer);
         if (write_in_process)
             return;
 
@@ -114,7 +114,7 @@ private:
                         co_return;
                     }
                     net_monitor_->update_upload_bytes(bytes);
-                    send_queue_.pop_front();
+                    send_queue_.pop();
                 }
             },
             boost::asio::detached);
@@ -139,7 +139,7 @@ private:
     abstract::tun2socks::udp_socket_ptr socket_;
     abstract::tun2socks&                tun2socks_;
 
-    std::list<toys::wrapper::pbuf_buffer> send_queue_;
+    std::queue<toys::wrapper::pbuf_buffer> send_queue_;
 
     transport_layer::udp_endpoint_pair local_endpoint_pair_;
 

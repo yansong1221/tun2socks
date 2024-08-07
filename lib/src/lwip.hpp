@@ -14,7 +14,6 @@
 #include <set>
 #include <thread>
 #include <time.h>
-#include <timeapi.h>
 
 #include "use_awaitable.hpp"
 

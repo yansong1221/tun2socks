@@ -1,5 +1,5 @@
 #pragma once
-#include "platform.hpp"
+#include <tun2socks/platform.h>
 #include <optional>
 #include <string>
 namespace process_info {

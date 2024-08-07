@@ -225,7 +225,7 @@ pbuf_alloc(pbuf_layer layer, u16_t length, pbuf_type type)
 {
   struct pbuf *p;
   u16_t offset = (u16_t)layer;
-  LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_alloc(length=%"U16_F")\n", length));
+  LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_alloc(length=%" U16_F ")\n", length));
 
   switch (type) {
     case PBUF_REF: /* fall through */
@@ -295,7 +295,7 @@ pbuf_alloc(pbuf_layer layer, u16_t length, pbuf_type type)
       LWIP_ASSERT("pbuf_alloc: erroneous type", 0);
       return NULL;
   }
-  LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_alloc(length=%"U16_F") == %p\n", length, (void *)p));
+  LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_alloc(length=%" U16_F ") == %p\n", length, (void *)p));
   return p;
 }
 
@@ -365,10 +365,10 @@ pbuf_alloced_custom(pbuf_layer l, u16_t length, pbuf_type type, struct pbuf_cust
 {
   u16_t offset = (u16_t)l;
   void *payload;
-  LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_alloced_custom(length=%"U16_F")\n", length));
+  LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_alloced_custom(length=%" U16_F ")\n", length));
 
   if (LWIP_MEM_ALIGN_SIZE(offset) + length > payload_mem_len) {
-    LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_LEVEL_WARNING, ("pbuf_alloced_custom(length=%"U16_F") buffer too short\n", length));
+    LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_LEVEL_WARNING, ("pbuf_alloced_custom(length=%" U16_F ") buffer too short\n", length));
     return NULL;
   }
 
@@ -515,7 +515,7 @@ pbuf_add_header_impl(struct pbuf *p, size_t header_size_increment, u8_t force)
       return 1;
     }
   }
-  LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_add_header: old %p new %p (%"U16_F")\n",
+  LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_add_header: old %p new %p (%" U16_F ")\n",
               (void *)p->payload, (void *)payload, increment_magnitude));
 
   /* modify pbuf fields */
@@ -606,7 +606,7 @@ pbuf_remove_header(struct pbuf *p, size_t header_size_decrement)
   p->len = (u16_t)(p->len - increment_magnitude);
   p->tot_len = (u16_t)(p->tot_len - increment_magnitude);
 
-  LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_remove_header: old %p new %p (%"U16_F")\n",
+  LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_remove_header: old %p new %p (%" U16_F ")\n",
               (void *)payload, (void *)p->payload, increment_magnitude));
 
   return 0;
@@ -789,7 +789,7 @@ pbuf_free(struct pbuf *p)
       /* p->ref > 0, this pbuf is still referenced to */
       /* (and so the remaining pbufs in chain as well) */
     } else {
-      LWIP_DEBUGF( PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_free: %p has ref %"U16_F", ending here.\n", (void *)p, (u16_t)ref));
+      LWIP_DEBUGF( PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_free: %p has ref %" U16_F ", ending here.\n", (void *)p, (u16_t)ref));
       /* stop walking through the chain */
       p = NULL;
     }

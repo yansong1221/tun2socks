@@ -1,31 +1,23 @@
 #include <time.h>
-#include <Windows.h>
 #include <unordered_set>
 #include <mutex>
 
 #include "lwip/sys.h"
+#include <chrono>
 
 
-static LARGE_INTEGER freq, sys_start_time;
 static std::mutex sys_arch_pcb_sets_syncobj;
 static std::unordered_set<void *> sys_arch_pcb_sets;
 
 void sys_init(void) {
-	QueryPerformanceFrequency(&freq);
-	QueryPerformanceCounter(&sys_start_time);
+	
 }
 
-static LONGLONG
+static u32_t
 sys_get_ms_longlong(void)
 {
-	LONGLONG ret;
-	LARGE_INTEGER now;
-	if (freq.QuadPart == 0) {
-		sys_init();
-	}
-	QueryPerformanceCounter(&now);
-	ret = now.QuadPart - sys_start_time.QuadPart;
-	return (u32_t)(((ret) * 1000) / freq.QuadPart);
+	auto time_point = std::chrono::steady_clock::now();
+	return std::chrono::duration_cast<std::chrono::milliseconds>(time_point.time_since_epoch()).count();
 }
 
 u32_t

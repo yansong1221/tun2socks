@@ -1,12 +1,17 @@
 #include <fcntl.h>
-#include <io.h>
+
 #include <locale>
 #include <tun2socks/tun2socks.h>
-#include <windows.h>
+
+#ifdef OS_WINDOWS
+#    include <io.h>
+#    include <windows.h>
+#endif
 int main(int argc, char** argv)
 {
+#ifdef OS_WINDOWS
     SetConsoleOutputCP(CP_UTF8);
-
+#endif
     std::locale::global(std::locale("en_US.UTF-8"));
     tun2socks tun2socks_;
 

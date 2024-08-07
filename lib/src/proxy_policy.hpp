@@ -26,10 +26,10 @@ public:
             return true;
 
         auto p = std::filesystem::path(info->execute_path).lexically_normal();
-        if (direct_process_.contains(p))
+        if (direct_process_.contains(p.string()))
             return true;
 
-        if (proxy_process_.contains(p)) {
+        if (proxy_process_.contains(p.string())) {
             spdlog::info("pid: {} name: {} execute_path: {}", info->pid, info->name, info->execute_path);
             return false;
         }
@@ -39,18 +39,20 @@ public:
 public:
     void add_proxy_process(const std::string& path)
     {
-        proxy_process_.insert(std::filesystem::path(path).lexically_normal());
+        auto p = std::filesystem::path(path).lexically_normal();
+        proxy_process_.insert(p.string());
     }
     void add_direct_process(const std::string& path)
     {
-        direct_process_.insert(std::filesystem::path(path).lexically_normal());
+        auto p = std::filesystem::path(path).lexically_normal();
+        direct_process_.insert(p.string());
     }
 
 private:
     bool default_direct_ = false;
 
-    std::unordered_set<std::filesystem::path> direct_process_;
-    std::unordered_set<std::filesystem::path> proxy_process_;
+    std::unordered_set<std::string> direct_process_;
+    std::unordered_set<std::string> proxy_process_;
 
     std::unordered_set<boost::asio::ip::address> direct_address_;
     std::unordered_set<boost::asio::ip::address> proxy_address_;

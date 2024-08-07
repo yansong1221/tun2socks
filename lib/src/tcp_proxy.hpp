@@ -8,7 +8,7 @@
 #include "pbuf.hpp"
 #include "socks_client/socks_client.hpp"
 #include <queue>
-
+#include <memory>
 class tcp_proxy : public std::enable_shared_from_this<tcp_proxy> {
 public:
     using ptr = std::shared_ptr<tcp_proxy>;
@@ -48,7 +48,7 @@ public:
                                             std::placeholders::_3));
         boost::asio::co_spawn(
             ioc_,
-            [this, self = shared_from_this()]() mutable -> boost::asio::awaitable<void> {
+            [this, self= shared_from_this()]() -> boost::asio::awaitable<void> {
                 socket_ = co_await tun2socks_.create_proxy_socket(local_endpoint_pair_);
                 if (!socket_ || !pcb_) {
                     do_close();
@@ -74,7 +74,7 @@ public:
                     }
                     buffer.realloc(bytes);
                     net_monitor_->update_download_bytes(bytes);
-                    this->send_queue_.push_back(buffer);
+                    this->send_queue_.push(buffer);
                     try_send();
                 }
             },
@@ -116,7 +116,7 @@ private:
         toys::wrapper::pbuf_buffer buffer(p, false);
 
         bool write_in_process = !recved_queue_.empty();
-        recved_queue_.push_back(buffer);
+        recved_queue_.push(buffer);
         if (write_in_process)
             return ERR_OK;
 
@@ -134,7 +134,7 @@ private:
                         co_return;
                     }
                     net_monitor_->update_upload_bytes(bytes);
-                    recved_queue_.pop_front();
+                    recved_queue_.pop();
                 }
             },
             boost::asio::detached);
@@ -174,7 +174,7 @@ private:
                 do_close();
                 return;
             }
-            send_queue_.pop_front();
+            send_queue_.pop();
         }
     }
 
@@ -186,8 +186,8 @@ private:
 
     transport_layer::tcp_endpoint_pair local_endpoint_pair_;
 
-    std::list<toys::wrapper::pbuf_buffer> recved_queue_;
-    std::list<toys::wrapper::pbuf_buffer> send_queue_;
+    std::queue<toys::wrapper::pbuf_buffer> recved_queue_;
+    std::queue<toys::wrapper::pbuf_buffer> send_queue_;
 
     std::shared_ptr<network_monitor> net_monitor_;
 };
