@@ -1,30 +1,30 @@
 #pragma once
-#include "interface.hpp"
+#include "core_impl_api.h"
 #include "lwip.hpp"
 #include "network_monitor.hpp"
 #include "pbuf.hpp"
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
+#include <tun2socks/connection.h>
+namespace tun2socks {
 
-class udp_proxy : public std::enable_shared_from_this<udp_proxy> {
+class udp_proxy : public connection, public std::enable_shared_from_this<udp_proxy> {
 public:
     using ptr = std::shared_ptr<udp_proxy>;
 
-    explicit udp_proxy(boost::asio::io_context&                  ioc,
-                       const transport_layer::udp_endpoint_pair& endpoint_pair,
-                       struct udp_pcb*                           pcb,
-                       abstract::tun2socks&                      _tun2socks)
+    explicit udp_proxy(boost::asio::io_context& ioc,
+                       const udp_endpoint_pair& endpoint_pair,
+                       struct udp_pcb*          pcb,
+                       core_impl_api&           core)
         : ioc_(ioc),
           net_monitor_(std::make_shared<network_monitor>(ioc)),
-          tun2socks_(_tun2socks),
+          core_(core),
           pcb_(pcb),
           local_endpoint_pair_(endpoint_pair)
     {
-        net_monitor_->start();
     }
     ~udp_proxy()
     {
-        net_monitor_->stop();
         spdlog::info("UDP disconnect: {0}", local_endpoint_pair_.to_string());
     }
 
@@ -46,8 +46,8 @@ public:
                                             std::placeholders::_5));
         boost::asio::co_spawn(
             ioc_, [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
-                socket_ = co_await tun2socks_.create_proxy_socket(local_endpoint_pair_,
-                                                                  proxy_endpoint_);
+                socket_ = co_await core_.create_proxy_socket(local_endpoint_pair_,
+                                                             proxy_endpoint_);
                 if (!socket_ || !pcb_) {
                     do_close();
                     co_return;
@@ -74,6 +74,42 @@ public:
                 }
             },
             boost::asio::detached);
+        net_monitor_->start();
+    }
+
+public:
+    conn_type type() const override
+    {
+        return connection::conn_type::udp;
+    }
+    std::string local_endpoint() const override
+    {
+        return fmt::format("[{}]:{}", local_endpoint_pair_.src.address().to_string(),
+                           local_endpoint_pair_.src.port());
+    }
+    std::string remote_endpoint() const override
+    {
+        return fmt::format("[{}]:{}", local_endpoint_pair_.dest.address().to_string(),
+                           local_endpoint_pair_.dest.port());
+    }
+    uint32_t get_speed_download_1s() const override
+    {
+        return net_monitor_->get_speed_download_1s();
+    }
+
+    uint32_t get_speed_upload_1s() const override
+    {
+        return net_monitor_->get_speed_upload_1s();
+    }
+
+    uint64_t get_total_download_bytes() const override
+    {
+        return net_monitor_->get_total_download_bytes();
+    }
+
+    uint64_t get_total_upload_bytes() const override
+    {
+        return net_monitor_->get_total_upload_bytes();
     }
 
 private:
@@ -126,24 +162,28 @@ private:
             lwip::lwip_udp_recv(pcb_, nullptr);
             lwip::lwip_udp_disconnect(pcb_);
             pcb_ = nullptr;
-        }
-        if (socket_ && socket_->is_open()) {
-            boost::system::error_code ec;
-            socket_->close(ec);
+
+            if (socket_ && socket_->is_open()) {
+                boost::system::error_code ec;
+                socket_->close(ec);
+            }
+            net_monitor_->stop();
+            core_.close_endpoint_pair(local_endpoint_pair_);
         }
     }
 
 private:
-    boost::asio::io_context&            ioc_;
-    struct udp_pcb*                     pcb_ = nullptr;
-    abstract::tun2socks::udp_socket_ptr socket_;
-    abstract::tun2socks&                tun2socks_;
+    boost::asio::io_context&      ioc_;
+    struct udp_pcb*               pcb_ = nullptr;
+    core_impl_api::udp_socket_ptr socket_;
+    core_impl_api&                core_;
 
     std::queue<toys::wrapper::pbuf_buffer> send_queue_;
 
-    transport_layer::udp_endpoint_pair local_endpoint_pair_;
+    udp_endpoint_pair local_endpoint_pair_;
 
     boost::asio::ip::udp::endpoint proxy_endpoint_;
 
     std::shared_ptr<network_monitor> net_monitor_;
 };
+}  // namespace tun2socks

@@ -1,13 +1,15 @@
 #pragma once
-#include <tun2socks/platform.h>
+#include <filesystem>
 #include <optional>
 #include <string>
+#include <tun2socks/platform.h>
+
 namespace process_info {
 struct process_info
 {
-    uint32_t    pid;
-    std::string name;
-    std::string execute_path;
+    uint32_t              pid;
+    std::string           name;
+    std::filesystem::path execute_path;
 };
 
 inline std::optional<process_info> get_process_info(uint16_t port);

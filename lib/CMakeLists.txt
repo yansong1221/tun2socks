@@ -15,8 +15,11 @@ add_library(${MODULE})
 
 
 SET(HEADER_FILES
-${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/tun2socks.h
+${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/core.h
 ${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/platform.h
+${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/parameter.h
+${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/proxy_policy.h
+${CMAKE_CURRENT_SOURCE_DIR}/include/tun2socks/connection.h
 )
 
 SET(SRC_FILES
@@ -34,19 +37,20 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/route/route.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/process_info/process_info.hpp
 
 
-${CMAKE_CURRENT_SOURCE_DIR}/src/interface.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/core_impl_api.h
 ${CMAKE_CURRENT_SOURCE_DIR}/src/misc.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/address_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/endpoint_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_proxy.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks_impl.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/tun2socks.cpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/core.cpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/core_impl.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/lwip.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/pbuf.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/proxy_policy.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/proxy_policy_impl.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/network_monitor.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/thread.hpp
 )
 if(APPLE)
 	list(APPEND SRC_FILES

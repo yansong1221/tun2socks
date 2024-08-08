@@ -1,7 +1,6 @@
 #pragma once
 #include <boost/asio.hpp>
 #include <fmt/format.h>
-namespace network_layer {
 
 class address_pair_type {
 public:
@@ -41,15 +40,13 @@ public:
     }
 };
 
-}  // namespace network_layer
-
 namespace std {
 template <>
-struct hash<network_layer::address_pair_type>
+struct hash<address_pair_type>
 {
-    typedef network_layer::address_pair_type argument_type;
-    typedef std::size_t                      result_type;
-    inline result_type                       operator()(argument_type const& s) const
+    typedef address_pair_type argument_type;
+    typedef std::size_t       result_type;
+    inline result_type        operator()(argument_type const& s) const
     {
         return std::hash<std::string>{}(s.to_string());
     }

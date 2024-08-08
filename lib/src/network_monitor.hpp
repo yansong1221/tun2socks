@@ -2,14 +2,13 @@
 #include "use_awaitable.hpp"
 #include <boost/asio.hpp>
 
+namespace tun2socks {
+
 class network_monitor : public std::enable_shared_from_this<network_monitor> {
 public:
     network_monitor(boost::asio::io_context& ioc)
         : ioc_(ioc),
           update_timer_(ioc)
-    {
-    }
-    ~network_monitor()
     {
     }
 
@@ -85,3 +84,4 @@ private:
     friend class tcp_proxy;
     friend class udp_proxy;
 };
+}  // namespace tun2socks
