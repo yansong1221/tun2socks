@@ -46,11 +46,9 @@ void core::set_connection_close_function(connection::open_function handle)
 }
 std::vector<connection::weak_ptr> core::udp_connections() const
 {
-    auto result = impl_->udp_connections();
-    return result.get();
+    return impl_->udp_connections();
 }
 std::vector<connection::weak_ptr> core::tcp_connections() const
 {
-    auto result = impl_->tcp_connections();
-    return result.get();
+    return impl_->tcp_connections();
 }

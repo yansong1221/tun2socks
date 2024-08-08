@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lwip/src/include/)
 add_subdirectory(lwip)
 
-find_package(Boost REQUIRED COMPONENTS asio url)
+find_package(Boost REQUIRED COMPONENTS asio)
 find_package(spdlog CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 
@@ -60,6 +60,7 @@ elseif(MSVC)
 	list(APPEND SRC_FILES 
 		${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/wintun_service.hpp
 		${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/wintun_library.hpp
+		${CMAKE_CURRENT_SOURCE_DIR}/src/tuntap/wintun.h
 		${CMAKE_CURRENT_SOURCE_DIR}/src/route/route_win32.hpp
 		${CMAKE_CURRENT_SOURCE_DIR}/src/process_info/process_info_win32.hpp
 	)
@@ -81,7 +82,7 @@ target_include_directories(${MODULE}
 )
 
 target_link_libraries(${MODULE} 
-PRIVATE Boost::asio Boost::url
+PRIVATE Boost::asio
 PRIVATE spdlog::spdlog fmt::fmt
 PUBLIC lwipcore
 )

@@ -92,33 +92,33 @@ public:
             conn_close_func_ = handle;
         });
     }
-    std::future<std::vector<connection::weak_ptr>> udp_connections()
+    std::vector<connection::weak_ptr> udp_connections()
     {
-        std::promise<std::vector<connection::weak_ptr>> result;
-        std::promise<std::vector<int>> result2;
-        std::future<std::vector<connection::weak_ptr>>  future = result.get_future();
+        std::vector<connection::weak_ptr> result;
+        std::promise<void>                done;
 
-        ioc_.dispatch([_result2 = std::move(result2)]() mutable {
-            /*std::vector<connection::weak_ptr> items;
+        ioc_.dispatch([&]() mutable -> void {
             for (const auto& v : udps_)
-                items.push_back(v.second);
+                result.push_back(v.second);
 
-            result.set_value(std::move(items));*/
+            done.set_value();
         });
-        return result.get_future();
+        done.get_future().wait();
+        return result;
     }
-    std::future<std::vector<connection::weak_ptr>> tcp_connections()
+    std::vector<connection::weak_ptr> tcp_connections()
     {
-        std::promise<std::vector<connection::weak_ptr>> result;
+        std::vector<connection::weak_ptr> result;
+        std::promise<void>                done;
 
-        ioc_.dispatch([this /*result = std::move(result)*/]() mutable {
-            /*std::vector<connection::weak_ptr> items;
+        ioc_.dispatch([&]() mutable -> void {
             for (const auto& v : tcps_)
-                items.push_back(v.second);
+                result.push_back(v.second);
 
-            result.set_value(std::move(items));*/
+            done.set_value();
         });
-        return result.get_future();
+        done.get_future().wait();
+        return result;
     }
 
 private:

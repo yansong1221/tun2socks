@@ -55,9 +55,10 @@ private:
                     if (ec)
                         co_return;
 
-                    speed_download_1s_ = speed_download_;
-                    speed_upload_1s_   = speed_upload_;
-                    speed_download_ = speed_upload_ = 0;
+                    speed_download_1s_ = speed_download_.load();
+                    speed_upload_1s_   = speed_upload_.load();
+                    speed_download_    = 0;
+                    speed_upload_      = 0;
                 }
             },
             boost::asio::detached);
@@ -72,14 +73,14 @@ private:
     boost::asio::io_context&  ioc_;
     boost::asio::steady_timer update_timer_;
 
-    uint64_t total_download_bytes_ = 0;
-    uint64_t total_upload_bytes_   = 0;
+    std::atomic_uint64_t total_download_bytes_ = 0;
+    std::atomic_uint64_t total_upload_bytes_   = 0;
 
-    uint32_t speed_download_1s_ = 0;
-    uint32_t speed_upload_1s_   = 0;
+    std::atomic_uint32_t speed_download_1s_ = 0;
+    std::atomic_uint32_t speed_upload_1s_   = 0;
 
-    uint32_t speed_download_ = 0;
-    uint32_t speed_upload_   = 0;
+    std::atomic_uint32_t speed_download_ = 0;
+    std::atomic_uint32_t speed_upload_   = 0;
 
     friend class tcp_proxy;
     friend class udp_proxy;
