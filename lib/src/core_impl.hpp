@@ -103,6 +103,9 @@ public:
 
             done.set_value();
         });
+        if (!is_runing())
+            ioc_.poll_one();
+
         done.get_future().wait();
         return result;
     }
@@ -117,6 +120,9 @@ public:
 
             done.set_value();
         });
+        if (!is_runing())
+            ioc_.poll_one();
+
         done.get_future().wait();
         return result;
     }
@@ -124,6 +130,8 @@ public:
 private:
     virtual bool on_thread_start() override
     {
+        ioc_.poll();
+
         boost::system::error_code ec;
         tuntap_.open(tun_param_, ec);
         boost::asio::detail::throw_error(ec);
