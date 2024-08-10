@@ -280,8 +280,6 @@ private:
     {
         spdlog::info("TCP proxy: {}", endpoint_pair.to_string());
 
-        auto port_info = process_info::get_process_info(endpoint_pair.src.port());
-
         auto socket = std::make_shared<boost::asio::ip::tcp::socket>(
             co_await boost::asio::this_coro::executor);
 

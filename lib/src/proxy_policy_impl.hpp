@@ -24,17 +24,21 @@ public:
             iter != addresses_.end())
             return iter->second;
 
-        auto info = process_info::get_process_info(endpoint_pair.src.port());
-        if (!info) {
+        auto pid = process_info::get_pid(endpoint_pair.src.port());
+        if (!pid) {
             spdlog::warn("Process information for port not found: {}", endpoint_pair.to_string());
             return default_direct_;
         }
-        if (auto iter = process_pid_.find(info->pid);
+        if (auto iter = process_pid_.find(*pid);
             iter != process_pid_.end())
             return iter->second;
 
-        auto p = info->execute_path.lexically_normal();
-        if (auto iter = process_path_.find(p.string());
+        auto exe_path = process_info::get_execute_path(*pid);
+        if (!exe_path)
+            return default_direct_;
+
+        auto p = std::filesystem::path(*exe_path).lexically_normal().string();
+        if (auto iter = process_path_.find(p);
             iter != process_path_.end())
             return iter->second;
 

@@ -11,11 +11,14 @@
 
 #include <ws2tcpip.h>
 
+#include <tlhelp32.h>
+
 #include <stdio.h>
 
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "Iphlpapi.lib")
 #pragma comment(lib, "Psapi.lib")
+#include <iostream>
 
 namespace process_info {
 
@@ -90,39 +93,37 @@ inline static DWORD udp_using_port(USHORT port)
     WSACleanup();
     return pid;
 }
-
-inline std::optional<process_info> get_process_info(uint16_t port)
+inline std::optional<uint32_t> get_pid(uint16_t port)
 {
     auto processID = tcp_using_port(port);
     if (processID == 0)
         processID = udp_using_port(port);
 
-    // 打开指定进程
-    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processID);
-
-    // 获取进程名称和路径
-    if (hProcess == NULL)
+    if (processID == 0)
         return std::nullopt;
 
-    TCHAR szProcessName[MAX_PATH] = TEXT("<unknown>");
-    TCHAR szProcessPath[MAX_PATH] = TEXT("<unknown>");
-
-    HMODULE hMod;
-    DWORD   cbNeeded;
-
-    // 获取进程的第一个模块句柄
-    if (EnumProcessModules(hProcess, &hMod, sizeof(hMod), &cbNeeded)) {
-        GetModuleBaseName(hProcess, hMod, szProcessName, sizeof(szProcessName) / sizeof(TCHAR));
-        GetModuleFileNameEx(hProcess, hMod, szProcessPath, sizeof(szProcessPath) / sizeof(TCHAR));
-    }
-    CloseHandle(hProcess);
-
-    process_info info;
-    info.pid          = processID;
-    info.name         = szProcessName;
-    info.execute_path = szProcessPath;
-    return info;
+    return processID;
 }
+inline std::optional<std::string> get_execute_path(uint32_t pid)
+{
+    // 获取进程快照
+    auto hModuleSnap = CreateToolhelp32Snapshot(TH32CS_SNAPALL, pid);
+    if (hModuleSnap == INVALID_HANDLE_VALUE)
+        return std::nullopt;
+
+    MODULEENTRY32 me32;
+    me32.dwSize = sizeof(MODULEENTRY32);
+
+    // 获取第一个进程信息
+    if (Module32First(hModuleSnap, &me32)) {
+        CloseHandle(hModuleSnap);
+        return me32.szExePath;
+    }
+
+    CloseHandle(hModuleSnap);
+    return std::nullopt;
+}
+
 inline uint32_t get_current_pid()
 {
     return GetCurrentProcessId();

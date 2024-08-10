@@ -33,7 +33,7 @@ public:
         return total_upload_bytes_;
     }
 
-private:
+
     void update_download_bytes(uint32_t bytes)
     {
         total_download_bytes_ += bytes;
@@ -81,8 +81,5 @@ private:
 
     std::atomic_uint32_t speed_download_ = 0;
     std::atomic_uint32_t speed_upload_   = 0;
-
-    friend class tcp_proxy;
-    friend class udp_proxy;
 };
 }  // namespace tun2socks

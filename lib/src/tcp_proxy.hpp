@@ -2,6 +2,7 @@
 #pragma once
 #include <spdlog/spdlog.h>
 
+#include "basic_connection.hpp"
 #include "core_impl_api.h"
 #include "lwip.hpp"
 #include "network_monitor.hpp"
@@ -9,11 +10,10 @@
 #include "socks_client/socks_client.hpp"
 #include <memory>
 #include <queue>
-#include <tun2socks/connection.h>
 
 namespace tun2socks {
 
-class tcp_proxy : public connection, public std::enable_shared_from_this<tcp_proxy> {
+class tcp_proxy : public tcp_basic_connection, public std::enable_shared_from_this<tcp_proxy> {
 public:
     using ptr = std::shared_ptr<tcp_proxy>;
 
@@ -22,16 +22,14 @@ public:
               struct tcp_pcb*          pcb,
               tcp_endpoint_pair        local_endpoint_pair,
               core_impl_api&           core)
-        : ioc_(ioc),
-          net_monitor_(std::make_shared<network_monitor>(ioc)),
+        : tcp_basic_connection(ioc, local_endpoint_pair),
           pcb_(pcb),
-          local_endpoint_pair_(local_endpoint_pair),
           core_(core)
     {
     }
     ~tcp_proxy()
     {
-        spdlog::info("TCP disconnect: {}", local_endpoint_pair_.to_string());
+        spdlog::info("TCP disconnect: {}", endpoint_pair().to_string());
     }
 
     void start()
@@ -49,9 +47,9 @@ public:
                                             std::placeholders::_2,
                                             std::placeholders::_3));
         boost::asio::co_spawn(
-            ioc_,
+            get_io_context(),
             [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
-                socket_ = co_await core_.create_proxy_socket(local_endpoint_pair_);
+                socket_ = co_await core_.create_proxy_socket(endpoint_pair());
                 if (!socket_ || !pcb_) {
                     do_close();
                     co_return;
@@ -75,48 +73,12 @@ public:
                         co_return;
                     }
                     buffer.realloc(bytes);
-                    net_monitor_->update_download_bytes(bytes);
+                    net_monitor().update_download_bytes(bytes);
                     this->send_queue_.push(buffer);
                     try_send();
                 }
             },
             boost::asio::detached);
-        net_monitor_->start();
-    }
-
-public:
-    conn_type type() const override
-    {
-        return connection::conn_type::tcp;
-    }
-    std::string local_endpoint() const override
-    {
-        return fmt::format("[{}]:{}", local_endpoint_pair_.src.address().to_string(),
-                           local_endpoint_pair_.src.port());
-    }
-    std::string remote_endpoint() const override
-    {
-        return fmt::format("[{}]:{}", local_endpoint_pair_.dest.address().to_string(),
-                           local_endpoint_pair_.dest.port());
-    }
-    uint32_t get_speed_download_1s() const override
-    {
-        return net_monitor_->get_speed_download_1s();
-    }
-
-    uint32_t get_speed_upload_1s() const override
-    {
-        return net_monitor_->get_speed_upload_1s();
-    }
-
-    uint64_t get_total_download_bytes() const override
-    {
-        return net_monitor_->get_total_download_bytes();
-    }
-
-    uint64_t get_total_upload_bytes() const override
-    {
-        return net_monitor_->get_total_upload_bytes();
     }
 
 private:
@@ -159,7 +121,7 @@ private:
             return ERR_OK;
 
         boost::asio::co_spawn(
-            ioc_,
+            get_io_context(),
             [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
                 boost::system::error_code ec;
                 while (!recved_queue_.empty()) {
@@ -171,7 +133,7 @@ private:
                         do_close();
                         co_return;
                     }
-                    net_monitor_->update_upload_bytes(bytes);
+                    net_monitor().update_upload_bytes(bytes);
                     recved_queue_.pop();
                 }
             },
@@ -193,8 +155,7 @@ private:
                 boost::system::error_code ec;
                 socket_->close(ec);
             }
-            net_monitor_->stop();
-            core_.close_endpoint_pair(local_endpoint_pair_);
+            core_.close_endpoint_pair(endpoint_pair());
         }
     }
     void try_send()
@@ -219,16 +180,12 @@ private:
     }
 
 private:
-    struct tcp_pcb*               pcb_;
-    boost::asio::io_context&      ioc_;
+    struct tcp_pcb* pcb_;
+
     core_impl_api&                core_;
     core_impl_api::tcp_socket_ptr socket_;
 
-    tcp_endpoint_pair local_endpoint_pair_;
-
     std::queue<toys::wrapper::pbuf_buffer> recved_queue_;
     std::queue<toys::wrapper::pbuf_buffer> send_queue_;
-
-    std::shared_ptr<network_monitor> net_monitor_;
 };
 }  // namespace tun2socks

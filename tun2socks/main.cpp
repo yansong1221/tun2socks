@@ -12,7 +12,7 @@ int main(int argc, char** argv)
 #ifdef OS_WINDOWS
     SetConsoleOutputCP(CP_UTF8);
 #endif
-    std::locale::global(std::locale("en_US.UTF-8"));
+    std::locale::global(std::locale("en_US.UTF-8")); 
     tun2socks::core tun2socks_;
 
     tun2socks::parameter::tun_device param;
@@ -38,8 +38,9 @@ int main(int argc, char** argv)
  /*   tun2socks_.proxy_policy()
            .set_process(R"(C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe)", false);*/
     tun2socks_.proxy_policy().set_process(R"(C:\Program Files\Clash Verge\verge-mihomo.exe)", true);
-    tun2socks_.proxy_policy().set_process(1920, true);
-    //tun2socks_.tcp_connections();
+    tun2socks_.proxy_policy().set_process(10108, true);
+    tun2socks_.proxy_policy().set_default_direct(true);
+    tun2socks_.tcp_connections();
 
     tun2socks_.start(param, socks5_param);
     

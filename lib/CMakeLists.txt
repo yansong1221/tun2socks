@@ -37,6 +37,7 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/route/route.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/process_info/process_info.hpp
 
 
+${CMAKE_CURRENT_SOURCE_DIR}/src/basic_connection.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/core_impl_api.h
 ${CMAKE_CURRENT_SOURCE_DIR}/src/misc.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_proxy.hpp

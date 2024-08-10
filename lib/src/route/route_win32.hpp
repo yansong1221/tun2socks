@@ -361,10 +361,10 @@ inline bool add_route_ipapi(const route_ipv6& r)
 
         DWORD dwRetVal = CreateIpForwardEntry2(&route);
         if (dwRetVal == NO_ERROR) {
-            printf("Default route added successfully.\n");
+            spdlog::info("Default route added successfully.");
         }
         else {
-            printf("CreateIpForwardEntry2 failed with error: %lu\n", dwRetVal);
+            spdlog::error("CreateIpForwardEntry2 failed with error: {}", dwRetVal);
         }
         return dwRetVal == NO_ERROR;
     }
@@ -394,10 +394,10 @@ inline bool del_route_ipapi(const route_ipv6& r)
         DWORD dwRetVal = DeleteIpForwardEntry2(&route);
 
         if (dwRetVal == NO_ERROR) {
-            printf("Default route deleted successfully.\n");
+            spdlog::info("Default route deleted successfully.");
         }
         else {
-            printf("DeleteIpForwardEntry2 failed with error: %lu\n", dwRetVal);
+            spdlog::error("DeleteIpForwardEntry2 failed with error: {}", dwRetVal);
         }
         return dwRetVal == NO_ERROR;
     }

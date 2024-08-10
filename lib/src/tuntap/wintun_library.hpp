@@ -81,202 +81,73 @@ namespace wintun {
                     return;
             }
         }
-
-        static bool SetDNS(const std::wstring& adapterName, const std::vector<std::wstring>& dnsServers)
+        inline static std::string InterfaceLuidToGuidString(const NET_LUID& interfaceLuid)
         {
-            HRESULT hres;
+            GUID    interfaceGuid;
+            HRESULT hr = ConvertInterfaceLuidToGuid(&interfaceLuid, &interfaceGuid);
 
-            // 初始化COM库
-            hres = CoInitializeEx(0, COINIT_MULTITHREADED);
-            if (FAILED(hres)) {
-                std::cerr << "Failed to initialize COM library. Error code = 0x" << std::hex << hres
-                          << std::endl;
+            if (hr == NO_ERROR) {
+                // 将 GUID 转换为字符串
+                wchar_t guidString[40];  // GUID 字符串的长度为 39 + 1
+                StringFromGUID2(interfaceGuid, guidString, sizeof(guidString) / sizeof(guidString[0]));
+
+                return misc::utf16_utf8(guidString);
+            }
+            else {
+                spdlog::error("Failed to convert InterfaceLuid to GUID. Error code: {}", hr);
+                return "";
+            }
+        }
+
+        inline static bool SetDnsServer(const std::string& adapterGuid, const std::string& dnsServers)
+        {
+            HKEY        hKey;
+            std::string regPath = "SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\" + adapterGuid;
+
+            LONG result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, regPath.c_str(), 0, KEY_SET_VALUE, &hKey);
+            if (result != ERROR_SUCCESS) {
+                spdlog::error("Failed to open registry key. Error code: {}", result);
                 return false;
             }
 
-            // 初始化安全性
-            hres = CoInitializeSecurity(NULL,
-                                        -1,                           // COM默认授权服务
-                                        NULL,                         // COM默认授权服务
-                                        NULL,                         // 保留为 NULL
-                                        RPC_C_AUTHN_LEVEL_DEFAULT,    // 默认认证
-                                        RPC_C_IMP_LEVEL_IMPERSONATE,  // 默认模拟级别
-                                        NULL,                         // 认证服务的代理身份
-                                        EOAC_NONE,                    // 不使用额外功能
-                                        NULL                          // 保留为 NULL
-            );
+            result = RegSetValueEx(hKey, "NameServer", 0, REG_SZ,
+                                   reinterpret_cast<const BYTE*>(dnsServers.c_str()),
+                                   (dnsServers.size() + 1) * sizeof(wchar_t));
 
-            if (FAILED(hres)) {
-                std::cerr << "Failed to initialize security. Error code = 0x" << std::hex << hres
-                          << std::endl;
-                CoUninitialize();
+            if (result != ERROR_SUCCESS) {
+                spdlog::error("Failed to set DNS server. Error code: {}", result);
+                RegCloseKey(hKey);
                 return false;
             }
 
-            // 创建WMI连接
-            IWbemLocator* pLoc = NULL;
-            hres               = CoCreateInstance(CLSID_WbemLocator,
-                                                  0,
-                                                  CLSCTX_INPROC_SERVER,
-                                                  IID_IWbemLocator,
-                                                  (LPVOID*)&pLoc);
+            RegCloseKey(hKey);
+            spdlog::info("DNS server set to {}", dnsServers);
+            return true;
+        }
+        inline static bool SetIpv6DnsServers(const std::string& adapterGuid, const std::string& dnsServers)
+        {
+            HKEY        hKey;
+            std::string regPath = "SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Interfaces\\" + adapterGuid;
 
-            if (FAILED(hres)) {
-                std::cerr << "Failed to create IWbemLocator object. Error code = 0x" << std::hex << hres
-                          << std::endl;
-                CoUninitialize();
+            LONG result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, regPath.c_str(), 0, KEY_SET_VALUE, &hKey);
+            if (result != ERROR_SUCCESS) {
+                spdlog::error("Failed to open registry key. Error code: {}", result);
                 return false;
             }
 
-            IWbemServices* pSvc = NULL;
+            result = RegSetValueEx(hKey, "NameServer", 0, REG_SZ,
+                                   reinterpret_cast<const BYTE*>(dnsServers.c_str()),
+                                   (dnsServers.size() + 1) * sizeof(wchar_t));
 
-            // 连接到 WMI
-            hres = pLoc->ConnectServer(_bstr_t(L"ROOT\\CIMV2"),  // WMI 命名空间
-                                       NULL,                     // 用户名（NULL = 当前用户）
-                                       NULL,                     // 用户密码（NULL = 当前密码）
-                                       0,                        // 本地化设置
-                                       NULL,                     // 安全标志
-                                       0,                        // 权限标志
-                                       0,                        // 权限代理
-                                       &pSvc                     // 接收 IWbemServices 指针
-            );
-
-            if (FAILED(hres)) {
-                std::cerr << "Could not connect to WMI server. Error code = 0x" << std::hex << hres
-                          << std::endl;
-                pLoc->Release();
-                CoUninitialize();
+            if (result != ERROR_SUCCESS) {
+                spdlog::error("Failed to set IPv6 DNS servers. Error code: {}", result);
+                RegCloseKey(hKey);
                 return false;
             }
 
-            // 设置WMI安全设置
-            hres = CoSetProxyBlanket(pSvc,                         // IWbemServices 代理
-                                     RPC_C_AUTHN_WINNT,            // 身份验证服务
-                                     RPC_C_AUTHZ_NONE,             // 授权服务
-                                     NULL,                         // 服务器的相对名称
-                                     RPC_C_AUTHN_LEVEL_CALL,       // 认证级别
-                                     RPC_C_IMP_LEVEL_IMPERSONATE,  // 模拟级别
-                                     NULL,                         // 客户端身份
-                                     EOAC_NONE                     // 代理功能
-            );
-
-            if (FAILED(hres)) {
-                std::cerr << "Could not set proxy blanket. Error code = 0x" << std::hex << hres
-                          << std::endl;
-                pSvc->Release();
-                pLoc->Release();
-                CoUninitialize();
-                return false;
-            }
-
-            // 查询所有启用了 IP 的网络适配器
-            IEnumWbemClassObject* pEnumerator = NULL;
-            hres                              = pSvc->ExecQuery(
-                bstr_t("WQL"),
-                bstr_t("SELECT * FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE"),
-                WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
-                NULL,
-                &pEnumerator);
-
-            if (FAILED(hres)) {
-                std::cerr << "WMI query failed. Error code = 0x" << std::hex << hres << std::endl;
-                pSvc->Release();
-                pLoc->Release();
-                CoUninitialize();
-                return false;
-            }
-
-            // 处理结果
-            IWbemClassObject* pclsObj = NULL;
-            ULONG             uReturn = 0;
-            bool              found   = false;
-
-            while (pEnumerator) {
-                HRESULT hr = pEnumerator->Next(WBEM_INFINITE, 1, &pclsObj, &uReturn);
-
-                if (0 == uReturn) {
-                    break;
-                }
-
-                VARIANT vtProp;
-                hr = pclsObj->Get(L"ServiceName", 0, &vtProp, 0, 0);
-                if (SUCCEEDED(hr) && vtProp.vt == VT_BSTR) {
-                    std::wstring netConnID = vtProp.bstrVal;
-                    VariantClear(&vtProp);
-
-                    // 检查适配器名称是否匹配
-                    if (netConnID == L"wintun") {
-                        found = true;
-
-                        // 调用适配器上的 SetDNSServerSearchOrder 方法
-                        IWbemClassObject* pClass = NULL;
-                        pSvc->GetObject(bstr_t("Win32_NetworkAdapterConfiguration"), 0, NULL, &pClass, NULL);
-                        IWbemClassObject* pInParamsDefinition = NULL;
-                        pClass->GetMethod(bstr_t("SetDNSServerSearchOrder"), 0, &pInParamsDefinition, NULL);
-
-                        IWbemClassObject* pClassInstance = NULL;
-                        pInParamsDefinition->SpawnInstance(0, &pClassInstance);
-
-                        SAFEARRAY* sa    = SafeArrayCreateVector(VT_BSTR, 0, dnsServers.size());
-                        LONG       index = 0;
-                        for (const auto& dns : dnsServers) {
-                            BSTR dnsServer = SysAllocString(dns.c_str());
-                            SafeArrayPutElement(sa, &index, dnsServer);
-                            SysFreeString(dnsServer);
-                            ++index;
-                        }
-
-                        VARIANT var;
-                        var.vt     = VT_ARRAY | VT_BSTR;
-                        var.parray = sa;
-
-                        hr = pClassInstance->Put(L"DNSServerSearchOrder", 0, &var, 0);
-                        VariantClear(&var);
-                        SafeArrayDestroy(sa);
-
-                        IWbemClassObject* pOutParams;
-                        hr = pSvc->ExecMethod(bstr_t("Win32_NetworkAdapterConfiguration"),
-                                              bstr_t("SetDNSServerSearchOrder"),
-                                              0,
-                                              NULL,
-                                              pClassInstance,
-                                              &pOutParams,
-                                              NULL);
-
-                        if (FAILED(hr)) {
-                            std::cerr << "Failed to set DNS. Error code = 0x" << std::hex << hr
-                                      << std::endl;
-                            pClassInstance->Release();
-                            pInParamsDefinition->Release();
-                            pClass->Release();
-                            pclsObj->Release();
-                            pSvc->Release();
-                            pLoc->Release();
-                            pEnumerator->Release();
-                            CoUninitialize();
-                            return false;
-                        }
-
-                        pClassInstance->Release();
-                        pInParamsDefinition->Release();
-                        pClass->Release();
-                        break;  // 找到匹配的适配器后，退出循环
-                    }
-                }
-
-                pclsObj->Release();
-            }
-
-            if (!found) {
-                std::wcerr << L"Adapter '" << adapterName << L"' not found." << std::endl;
-            }
-
-            pSvc->Release();
-            pLoc->Release();
-            pEnumerator->Release();
-            CoUninitialize();
-
-            return found;
+            RegCloseKey(hKey);
+            spdlog::info("IPv6 DNS servers set to {}", dnsServers);
+            return true;
         }
     }  // namespace details
 
@@ -416,6 +287,8 @@ namespace wintun {
                     auto LastError = CreateUnicastIpAddressEntry(&AddressRow);
                     if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
                         details::log_throw_system_error("Failed to set IPv4 address", LastError);
+
+                    details::SetDnsServer(details::InterfaceLuidToGuidString(AddressRow.InterfaceLuid), param.ipv4->dns);
                 }
                 if (param.ipv6) {
                     auto addr = boost::asio::ip::make_address_v6(param.ipv6->addr, ec);
@@ -434,37 +307,15 @@ namespace wintun {
                     auto LastError                = CreateUnicastIpAddressEntry(&AddressRow);
                     if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
                         details::log_throw_system_error("Failed to set IPv6 address", LastError);
+
+                    details::SetIpv6DnsServers(details::InterfaceLuidToGuidString(AddressRow.InterfaceLuid), param.ipv6->dns);
                 }
 
                 auto Session = library_->WintunStartSession(wintun_adapter_, 0x400000);
                 if (!Session)
                     details::log_throw_last_system_error("Failed to create adapter");
 
-                auto obj = std::make_shared<session>(shared_from_this(), Session);
-
-                if (param.ipv4) {
-                    auto addr = boost::asio::ip::make_address_v4(param.ipv4->dns, ec);
-                    if (ec)
-                        return nullptr;
-                    auto cmd = std::format("netsh interface ip set dns name=\"{}\" source=static address={}",
-                                           param.tun_name,
-                                           addr.to_string());
-                    // set dns
-                    system(cmd.c_str());
-                }
-                if (param.ipv6) {
-                    auto addr = boost::asio::ip::make_address_v6(param.ipv6->dns, ec);
-                    if (ec)
-                        return nullptr;
-
-                    auto cmd = std::format("netsh interface ipv6 set dnsservers \"{}\" static {}",
-                                           param.tun_name,
-                                           addr.to_string());
-                    // set dns
-                    system(cmd.c_str());
-                }
-
-                return obj;
+                return std::make_shared<session>(shared_from_this(), Session);
             }
             catch (const boost::system::system_error& system_error) {
                 ec = system_error.code();

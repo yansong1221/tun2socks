@@ -5,15 +5,11 @@
 #include <tun2socks/platform.h>
 
 namespace process_info {
-struct process_info
-{
-    uint32_t              pid;
-    std::string           name;
-    std::filesystem::path execute_path;
-};
 
-inline std::optional<process_info> get_process_info(uint16_t port);
-inline uint32_t                    get_current_pid();
+inline std::optional<uint32_t>    get_pid(uint16_t port);
+inline std::optional<std::string> get_execute_path(uint32_t pid);
+
+inline uint32_t get_current_pid();
 
 }  // namespace process_info
 
