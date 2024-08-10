@@ -4,8 +4,10 @@
 #include "network_monitor.hpp"
 #include "pbuf.hpp"
 #include <boost/asio.hpp>
+#include <queue>
 #include <spdlog/spdlog.h>
 #include <tun2socks/connection.h>
+
 namespace tun2socks {
 
 class udp_proxy : public connection, public std::enable_shared_from_this<udp_proxy> {
@@ -84,13 +86,23 @@ public:
     }
     std::string local_endpoint() const override
     {
-        return fmt::format("[{}]:{}", local_endpoint_pair_.src.address().to_string(),
-                           local_endpoint_pair_.src.port());
+        auto result = std::make_shared<std::promise<std::string>>();
+        ioc_.dispatch([this, result]() mutable {
+            result->set_value(fmt::format("[{}]:{}",
+                                          local_endpoint_pair_.src.address().to_string(),
+                                          local_endpoint_pair_.src.port()));
+        });
+        return result->get_future().get();
     }
     std::string remote_endpoint() const override
     {
-        return fmt::format("[{}]:{}", local_endpoint_pair_.dest.address().to_string(),
-                           local_endpoint_pair_.dest.port());
+        auto result = std::make_shared<std::promise<std::string>>();
+        ioc_.dispatch([this, result]() mutable {
+            result->set_value(fmt::format("[{}]:{}",
+                                          local_endpoint_pair_.dest.address().to_string(),
+                                          local_endpoint_pair_.dest.port()));
+        });
+        return result->get_future().get();
     }
     uint32_t get_speed_download_1s() const override
     {
