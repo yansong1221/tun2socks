@@ -103,7 +103,7 @@ namespace tuntap {
                 spdlog::error("Failed to add address: {}", nl_geterror(err));
             }
             else {
-                spdlog::error("Successfully added IPv6 address.");
+                spdlog::info("Successfully added IPv4 address.");
             }
 
             // Clean up
@@ -180,7 +180,7 @@ namespace tuntap {
                 spdlog::error("Failed to add address: {}", nl_geterror(err));
             }
             else {
-                spdlog::error("Successfully added IPv6 address.");
+                spdlog::info("Successfully added IPv6 address.");
             }
 
             // Clean up

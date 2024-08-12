@@ -11,8 +11,8 @@ int main(int argc, char** argv)
 {
 #ifdef OS_WINDOWS
     SetConsoleOutputCP(CP_UTF8);
-#endif
     std::locale::global(std::locale("en_US.UTF-8")); 
+#endif
     tun2socks::core tun2socks_;
 
     tun2socks::parameter::tun_device param;

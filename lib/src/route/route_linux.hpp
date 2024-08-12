@@ -11,10 +11,10 @@
 #include <vector>
 
 #include <netlink/netlink.h>
+#include <netlink/route/addr.h>
+#include <netlink/route/link.h>
 #include <netlink/route/nexthop.h>
 #include <netlink/route/route.h>
-#include <netlink/route/link.h>
-#include <netlink/route/addr.h>
 namespace route {
 namespace details {
 
@@ -125,26 +125,50 @@ namespace details {
         struct nl_cache*   route_cache;
         rtnl_route_alloc_cache(sock, AF_INET, 0, &route_cache);
 
-        nl_cache_foreach(route_cache, [](struct nl_object* obj, void* arg) {
-        struct rtnl_route* route_iter = (struct rtnl_route*)obj;
-        std::vector<linux_route_v4>* route_vec = (std::vector<linux_route_v4>*)arg;
+        for (nl_object* obj = nl_cache_get_first(route_cache); obj; obj = nl_cache_get_next(obj)) {
+            struct rtnl_route* route_iter = (struct rtnl_route*)obj;
+            if (rtnl_route_get_family(route_iter) != AF_INET)
+                continue;
 
-        if (rtnl_route_get_family(route_iter) == AF_INET) {
-            
-            char buffer[128];
-            struct nl_addr *dst = rtnl_route_get_dst(route_iter);
+            struct nl_addr* dst = rtnl_route_get_dst(route_iter);
 
             linux_route_v4 info;
+            info.metric = rtnl_route_get_priority(route_iter);
+            {
+                struct sockaddr_in addr;
+                socklen_t          addr_len = sizeof(sockaddr_in);
+                nl_addr_fill_sockaddr(dst, (struct sockaddr*)&addr, &addr_len);
+                info.destination   = boost::asio::ip::make_address_v4(::ntohl(addr.sin_addr.s_addr));
+                info.prefix_length = nl_addr_get_prefixlen(dst);
+            }
+            auto nh_count = rtnl_route_get_nnexthops(route);
+            spdlog::info("22222222 {}",nh_count);
+            for (int i = 0; i < nh_count; ++i) {
+                struct rtnl_nexthop* nh = rtnl_route_nexthop_n(route_iter, i);
+                if (nh) {
+                    struct nl_addr* gateway = rtnl_route_nh_get_gateway(nh);
+                    if (gateway) {
+                        char gateway_str[INET6_ADDRSTRLEN];
+                        nl_addr2str(gateway, gateway_str, sizeof(gateway_str));
+                        printf("Nexthop %d gateway: %s\n", i, gateway_str);
+                    }
+                }
+            }
 
-            rtnl_route_get_metric(route_iter,RTAX_HOPLIMIT,&info.metric);
-            info.destination = boost::asio::ip::make_address_v4(nl_addr2str(dst,buffer,sizeof(buffer)));
-            info.prefix_length = nl_addr_get_prefixlen(dst);
+            spdlog::info("11111111111 {} {} {}", info.destination.to_string(), info.prefix_length, info.metric);
+            {
+                // struct rtnl_nexthop* nh = rtnl_route_nexthop_n(route_iter, 1);
+                // struct nl_addr*      gw = rtnl_route_nh_get_gateway(nh);
 
-            struct rtnl_nexthop* nh = rtnl_route_nexthop_n(route_iter, 0);
-            struct nl_addr*      gw = rtnl_route_nh_get_gateway(nh);
-            info.gateway          = boost::asio::ip::make_address_v4(nl_addr2str(gw, buffer, sizeof(buffer)));
-            info.iface_index = rtnl_route_nh_get_ifindex(nh);
-        } }, &route_vec);
+                // struct sockaddr_in addr;
+                // socklen_t addr_len = sizeof(sockaddr_in);
+                // nl_addr_fill_sockaddr(gw,(struct sockaddr*)&addr,&addr_len);
+
+                // info.gateway          = boost::asio::ip::make_address_v4(::ntohl(addr.sin_addr.s_addr));
+                // info.iface_index = rtnl_route_nh_get_ifindex(nh);
+            }
+            // spdlog::info("22222222222 {} {}",info.gateway.to_string(),info.iface_index);
+        }
 
         nl_cache_free(route_cache);
         nl_socket_free(sock);
@@ -152,8 +176,7 @@ namespace details {
     }
     inline static std::optional<linux_route_v4> get_linux_default_ipv4_route()
     {
-        auto routes = get_linux_all_ipv4_route();
-
+        auto                          routes = get_linux_all_ipv4_route();
         std::optional<linux_route_v4> best;
 
         for (const auto& route : routes) {
@@ -182,7 +205,7 @@ inline std::optional<route_ipv4> get_default_ipv4_route()
             if (!adapter.unicast_addr_v4.empty())
                 info.if_addr = adapter.unicast_addr_v4.front();
             info.metric  = route->metric;
-            info.netmask = details::create_ipv4_mask_from_prefix_length(route->prefix_length); 
+            info.netmask = details::create_ipv4_mask_from_prefix_length(route->prefix_length);
             info.network = route->destination;
             return info;
         }
