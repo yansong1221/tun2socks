@@ -17,4 +17,6 @@ inline uint32_t get_current_pid();
 #    include "process_info/process_info_win32.hpp"
 #elif defined(OS_MACOS)
 #    include "process_info/process_info_mac.hpp"
+#elif defined(OS_LINUX)
+#    include "process_info/process_info_linux.hpp"
 #endif

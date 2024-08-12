@@ -65,6 +65,12 @@ elseif(MSVC)
 		${CMAKE_CURRENT_SOURCE_DIR}/src/route/route_win32.hpp
 		${CMAKE_CURRENT_SOURCE_DIR}/src/process_info/process_info_win32.hpp
 	)
+elseif(UNIX AND NOT APPLE)
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(LIBNL REQUIRED libnl-3.0 libnl-genl-3.0 libnl-route-3.0)
+	target_include_directories(${MODULE} PUBLIC ${LIBNL_INCLUDE_DIRS})
+	target_link_directories(${MODULE} PUBLIC ${LIBNL_INCLUDE_DIRS})
+	target_link_libraries(${MODULE} PUBLIC ${LIBNL_LIBRARIES})
 endif()
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${HEADER_FILES} ${SRC_FILES})
@@ -94,8 +100,4 @@ if(MSVC)
 		"$<$<CXX_COMPILER_ID:MSVC>:/source-charset:utf-8>"
 		"$<$<CXX_COMPILER_ID:MSVC>:/execution-charset:utf-8>"
 	)
-	set_target_properties(${MODULE} PROPERTIES
-    LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\" /SUBSYSTEM:WINDOWS"
-)
-
 endif(MSVC)

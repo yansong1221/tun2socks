@@ -9,8 +9,15 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <netlink/attr.h>
+#include <netlink/genl/genl.h>
+#include <netlink/netlink.h>
+#include <netlink/route/addr.h>
+
 #include <boost/asio.hpp>
+#include <string>
 #include <tun2socks/parameter.h>
+
 namespace tun2socks {
 namespace tuntap {
 
@@ -26,75 +33,167 @@ namespace tuntap {
             auto ec = log_last_system_error(prefix);
             throw boost::system::system_error(ec);
         }
-        boost::asio::ip::address_v4 create_ipv4_mask_from_prefix_length(uint8_t prefix_length)
-        {
-            // 初始化为全0
-            uint32_t mask = 0;
-
-            // 将前 prefix_length 位设置为 1
-            if (prefix_length > 0) {
-                mask = (0xFFFFFFFF << (32 - prefix_length)) & 0xFFFFFFFF;
-            }
-
-            // 将 mask 转换为 boost::asio::ip::address_v4
-            return boost::asio::ip::address_v4(boost::asio::ip::address_v4::bytes_type{
-                static_cast<uint8_t>((mask >> 24) & 0xFF),
-                static_cast<uint8_t>((mask >> 16) & 0xFF),
-                static_cast<uint8_t>((mask >> 8) & 0xFF),
-                static_cast<uint8_t>(mask & 0xFF)});
-        }
-        inline static void set_ipv4_address(int                                ctl_skt,
-                                            const std::string&                 ifr_name,
+        
+        inline static void set_ipv4_address(const std::string&                 if_name,
                                             const boost::asio::ip::address_v4& ip,
-                                            const boost::asio::ip::address_v4& mask)
+                                            uint8_t                            prefix_length)
         {
-            ifreq ifr{0};
+            struct nl_sock*   sock;
+            struct nl_cache*  cache;
+            struct rtnl_addr* addr;
+            struct rtnl_link* link;
+            struct nl_cache*  links;
+            struct nl_cache*  addrs;
+            struct nl_addr*   local;
+            int               ifindex;
+            int               err;
 
-            // 设置 IP 地址
-            sockaddr_in ip_addr{0};
-            ip_addr.sin_family      = AF_INET;
-            ip_addr.sin_addr.s_addr = ::htonl(ip.to_ulong());
-            memcpy(&ifr.ifr_addr, &ip_addr, sizeof(ip_addr));
-            strcpy(ifr.ifr_name, ifr_name.c_str());
-
-            if (ioctl(ctl_skt, SIOCSIFADDR, &ifr) == -1) {
-                log_throw_last_system_error("ioctl SIOCSIFADDR");
+            // Initialize netlink socket
+            sock = nl_socket_alloc();
+            if (!sock) {
+                spdlog::error("Failed to allocate netlink socket.");
                 return;
             }
 
-            // 设置子网掩码
-            sockaddr_in mask_struct{0};
-            mask_struct.sin_family      = AF_INET;
-            mask_struct.sin_addr.s_addr = ::htonl(mask.to_ulong());
-            memcpy(&ifr.ifr_netmask, &mask_struct, sizeof(mask_struct));
-
-            if (ioctl(ctl_skt, SIOCSIFNETMASK, &ifr) == -1) {
-                log_throw_last_system_error("ioctl SIOCSIFNETMASK");
+            // Connect to netlink
+            if (nl_connect(sock, NETLINK_ROUTE) < 0) {
+                spdlog::error("Failed to connect to netlink.");
+                nl_socket_free(sock);
+                return;
             }
+
+            // Get the link cache
+            if (rtnl_link_alloc_cache(sock, AF_UNSPEC, &links) < 0) {
+                spdlog::error("Failed to get link cache.");
+                nl_socket_free(sock);
+                return;
+            }
+
+            // Find the interface by name
+            link = rtnl_link_get_by_name(links, if_name.c_str());
+            if (!link) {
+                spdlog::error("Interface not found: {}", if_name);
+                nl_cache_free(links);
+                nl_socket_free(sock);
+                return;
+            }
+
+            ifindex = rtnl_link_get_ifindex(link);
+            nl_cache_free(links);
+
+            // Create a new address object
+            addr = rtnl_addr_alloc();
+            if (!addr) {
+                spdlog::error("Failed to allocate address.");
+                nl_socket_free(sock);
+                return;
+            }
+
+            // Set the address
+            rtnl_addr_set_family(addr, AF_INET);
+            rtnl_addr_set_ifindex(addr, ifindex);
+
+            nl_addr_parse(ip.to_string().c_str(), AF_INET, &local);
+            rtnl_addr_set_local(addr, local);
+            rtnl_addr_set_prefixlen(addr, prefix_length);
+
+            // Add the address
+            err = rtnl_addr_add(sock, addr, NLM_F_CREATE);
+            if (err < 0) {
+                spdlog::error("Failed to add address: {}", nl_geterror(err));
+            }
+            else {
+                spdlog::error("Successfully added IPv6 address.");
+            }
+
+            // Clean up
+            rtnl_addr_put(addr);
+            nl_socket_free(sock);
         }
 
-        inline static void set_ipv6_address(int                                ctl_skt,
-                                            const std::string&                 ifr_name,
+        inline static void set_ipv6_address(const std::string&                 if_name,
                                             const boost::asio::ip::address_v6& ip,
                                             uint8_t                            prefix_length)
         {
-            in6_ifreq ifr6{0};
+            struct nl_sock*   sock;
+            struct nl_cache*  cache;
+            struct rtnl_addr* addr;
+            struct rtnl_link* link;
+            struct nl_cache*  links;
+            struct nl_cache*  addrs;
+            struct nl_addr*   local;
+            int               ifindex;
+            int               err;
 
-            strncpy(ifr6.ifr6_ifname, ifr_name.c_str(), IFNAMSIZ);
-            ifr6.ifr6_addr      = *reinterpret_cast<const struct in6_addr*>(ip.to_bytes().data());
-            ifr6.ifr6_prefixlen = prefix_length;
-
-            if (ioctl(ctl_skt, SIOCSIFADDR, &ifr6) == -1) {
-                log_throw_last_system_error("ioctl SIOCSIFADDR");
+            // Initialize netlink socket
+            sock = nl_socket_alloc();
+            if (!sock) {
+                spdlog::error("Failed to allocate netlink socket.");
                 return;
             }
+
+            // Connect to netlink
+            if (nl_connect(sock, NETLINK_ROUTE) < 0) {
+                spdlog::error("Failed to connect to netlink.");
+                nl_socket_free(sock);
+                return;
+            }
+
+            // Get the link cache
+            if (rtnl_link_alloc_cache(sock, AF_UNSPEC, &links) < 0) {
+                spdlog::error("Failed to get link cache.");
+                nl_socket_free(sock);
+                return;
+            }
+
+            // Find the interface by name
+            link = rtnl_link_get_by_name(links, if_name.c_str());
+            if (!link) {
+                spdlog::error("Interface not found: {}", if_name);
+                nl_cache_free(links);
+                nl_socket_free(sock);
+                return;
+            }
+
+            ifindex = rtnl_link_get_ifindex(link);
+            nl_cache_free(links);
+
+            // Create a new address object
+            addr = rtnl_addr_alloc();
+            if (!addr) {
+                spdlog::error("Failed to allocate address.");
+                nl_socket_free(sock);
+                return;
+            }
+
+            // Set the address
+            rtnl_addr_set_family(addr, AF_INET6);
+            rtnl_addr_set_ifindex(addr, ifindex);
+
+            nl_addr_parse(ip.to_string().c_str(), AF_INET6, &local);
+            rtnl_addr_set_local(addr, local);
+            rtnl_addr_set_prefixlen(addr, prefix_length);
+
+            // Add the address
+            err = rtnl_addr_add(sock, addr, NLM_F_CREATE);
+            if (err < 0) {
+                spdlog::error("Failed to add address: {}", nl_geterror(err));
+            }
+            else {
+                spdlog::error("Successfully added IPv6 address.");
+            }
+
+            // Clean up
+            rtnl_addr_put(addr);
+            nl_socket_free(sock);
         }
     }  // namespace details
 
     class tun_service_linux : public boost::asio::detail::service_base<tun_service_linux> {
     public:
         tun_service_linux(boost::asio::io_context& ioc)
-            : boost::asio::detail::service_base<tun_service_linux>(ioc), stream_(ioc)
+            : boost::asio::detail::service_base<tun_service_linux>(ioc),
+              stream_descriptor_(ioc)
         {
         }
 
@@ -103,7 +202,7 @@ namespace tuntap {
             int fd      = -1;
             int ctl_skt = -1;
             try {
-                if ((fd = open("/dev/net/tun", O_RDWR)) == -1) {
+                if ((fd = ::open("/dev/net/tun", O_RDWR)) == -1) {
                     details::log_throw_last_system_error("open");
                     return;
                 }
@@ -116,23 +215,17 @@ namespace tuntap {
                     details::log_throw_last_system_error("ioctl");
                     return;
                 }
-                ctl_skt = socket(AF_INET, SOCK_DGRAM, 0);
-                if (ctl_skt == -1) {
-                    details::log_throw_last_system_error("socket");
-                    return;
-                }
 
                 if (param.ipv4) {
-                    details::set_ipv4_address(ctl_skt,
-                                              param.tun_name,
+                    details::set_ipv4_address(param.tun_name,
                                               boost::asio::ip::make_address_v4(param.ipv4->addr),
-                                              details::create_ipv4_mask_from_prefix_length(param.ipv4->prefix_length));
+                                              param.ipv4->prefix_length);
                 }
                 if (param.ipv6) {
-                    details::set_ipv6_address(ctl_skt,
-                                              param.tun_name,
-                                              boost::asio::ip::make_address_v6(param.ipv6->addr),
-                                              param.ipv6->prefix_length);
+                    details::set_ipv6_address(
+                        param.tun_name,
+                        boost::asio::ip::make_address_v6(param.ipv6->addr),
+                        param.ipv6->prefix_length);
                 }
                 stream_descriptor_.assign(fd);
             }

@@ -36,4 +36,6 @@ inline bool del_route_ipapi(const route_ipv6& r);
 #    include "route_win32.hpp"
 #elif defined(OS_MACOS)
 #    include "route_mac.hpp"
+#elif defined(OS_LINUX)
+#    include "route_linux.hpp"
 #endif
