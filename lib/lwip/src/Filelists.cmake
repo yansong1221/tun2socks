@@ -34,7 +34,7 @@ endif ("${LWIP_VERSION_RC}" STREQUAL "LWIP_RC_RELEASE")
 set(lwipcore_SRCS
     ${LWIP_DIR}/src/core/init.cpp
     ${LWIP_DIR}/src/core/def.c
-    ${LWIP_DIR}/src/core/dns.c
+    ${LWIP_DIR}/src/core/dns.cpp
     ${LWIP_DIR}/src/core/inet_chksum.c
     ${LWIP_DIR}/src/core/ip.cpp
     ${LWIP_DIR}/src/core/mem.c

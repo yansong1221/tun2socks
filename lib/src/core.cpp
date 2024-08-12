@@ -1,5 +1,4 @@
 #include "core_impl.hpp"
-#include <boost/url.hpp>
 #include <spdlog/spdlog.h>
 #include <tun2socks/core.h>
 
