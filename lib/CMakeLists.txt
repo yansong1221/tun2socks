@@ -88,14 +88,9 @@ PRIVATE spdlog::spdlog fmt::fmt
 PUBLIC lwipcore
 )
 
-if(MSVC)
-	#target_compile_definitions(${MODULE} PRIVATE _WIN32_WINDOWS)
-	target_compile_options( ${MODULE} PRIVATE
-		"$<$<CXX_COMPILER_ID:MSVC>:/source-charset:utf-8>"
-		"$<$<CXX_COMPILER_ID:MSVC>:/execution-charset:utf-8>"
-	)
-	set_target_properties(${MODULE} PROPERTIES
-    LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\" /SUBSYSTEM:WINDOWS"
-)
 
-endif(MSVC)
+#target_compile_definitions(${MODULE} PRIVATE _WIN32_WINDOWS)
+target_compile_options( ${MODULE} PRIVATE
+	"$<$<CXX_COMPILER_ID:MSVC>:/source-charset:utf-8>"
+	"$<$<CXX_COMPILER_ID:MSVC>:/execution-charset:utf-8>"
+)

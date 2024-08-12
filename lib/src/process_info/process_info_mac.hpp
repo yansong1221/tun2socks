@@ -8,7 +8,7 @@
 
 namespace process_info {
 
-inline std::optional<process_info> get_process_info(uint16_t port)
+inline std::optional<uint32_t> get_pid(uint16_t port)
 {
     pid_t pids_buffer[1024];
     int   numberOfProcesses = proc_listallpids(pids_buffer, sizeof(pids_buffer));
@@ -24,25 +24,21 @@ inline std::optional<process_info> get_process_info(uint16_t port)
                 struct socket_fdinfo s;
                 proc_pidfdinfo(pid, fdinfo[j].proc_fd, PROC_PIDFDSOCKETINFO, &s, sizeof(s));
 
-                if (s.psi.soi_family == AF_INET && s.psi.soi_kind == SOCKINFO_TCP && ntohs(s.psi.soi_proto.pri_tcp.tcpsi_ini.insi_fport) == port) {
-                    // 获取进程名称
-                    char name[PROC_PIDPATHINFO_MAXSIZE];
-                    char path[PROC_PIDPATHINFO_MAXSIZE];
-                    proc_name(pid, name, sizeof(name));
-                    proc_pidpath(pid, path, sizeof(path));
-
-                    process_info info;
-                    info.pid          = pid;
-                    info.name         = name;
-                    info.execute_path = path;
-                    return info;
-                }
+                if (ntohs(s.psi.soi_proto.pri_tcp.tcpsi_ini.insi_fport) == port)
+                    return pid;
             }
         }
     }
     return std::nullopt;
 }
-inline uint32_t get_current_pid()
+std::optional<std::string> get_execute_path(uint32_t pid)
+{
+    // 获取进程名称
+    char path[PROC_PIDPATHINFO_MAXSIZE];
+    proc_pidpath(pid, path, sizeof(path));
+    return path;
+}
+uint32_t get_current_pid()
 {
     return getpid();
 }

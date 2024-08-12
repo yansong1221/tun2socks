@@ -29,7 +29,7 @@ public:
         else if constexpr (std::is_same_v<boost::asio::ip::udp, InternetProtocol>)
             return connection::conn_type::udp;
         else
-            static_assert(false, "error");
+            static_assert(std::is_same_v<InternetProtocol,InternetProtocol>, "error internet protocol");
     }
     std::string local_endpoint() const override
     {

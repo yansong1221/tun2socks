@@ -40,7 +40,7 @@ int main(int argc, char** argv)
     tun2socks_.proxy_policy().set_process(R"(C:\Program Files\Clash Verge\verge-mihomo.exe)", true);
     tun2socks_.proxy_policy().set_process(10108, true);
     tun2socks_.proxy_policy().set_default_direct(true);
-    tun2socks_.tcp_connections();
+    //tun2socks_.tcp_connections();
 
     tun2socks_.start(param, socks5_param);
     
