@@ -33,7 +33,7 @@ namespace tuntap {
             auto ec = log_last_system_error(prefix);
             throw boost::system::system_error(ec);
         }
-        
+
         inline static void set_ipv4_address(const std::string&                 if_name,
                                             const boost::asio::ip::address_v4& ip,
                                             uint8_t                            prefix_length)
@@ -226,6 +226,28 @@ namespace tuntap {
                         param.tun_name,
                         boost::asio::ip::make_address_v6(param.ipv6->addr),
                         param.ipv6->prefix_length);
+                }
+
+                ctl_skt = socket(AF_INET, SOCK_DGRAM, 0);
+                if (ctl_skt == -1) {
+                    details::log_throw_last_system_error("socket");
+                    return;
+                }
+
+                if (ioctl(fd, TUNGETIFF, &ifr) == -1) {
+                    details::log_throw_last_system_error("ioctl");
+                    return;
+                }
+                ifr.ifr_flags |= IFF_UP;
+
+                if (ioctl(ctl_skt, SIOCSIFFLAGS, &ifr) != -1) {
+                    details::log_throw_last_system_error("ioctl");
+                    return;
+                }
+
+                if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
+                    details::log_throw_last_system_error("ioctl");
+                    return;
                 }
                 stream_descriptor_.assign(fd);
             }

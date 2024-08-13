@@ -132,28 +132,32 @@ private:
     {
         ioc_.poll();
 
+        default_adapter_ = route::get_default_adapter();
+        if (default_adapter_) {
+            spdlog::info("Default network interface v4: {0}", default_adapter_->v4_address().to_string());
+            spdlog::info("Default network interface v6: {0}", default_adapter_->v6_address().to_string());
+        }
+        else {
+            spdlog::warn("Failed to obtain default network adapter");
+        }
+
         boost::system::error_code ec;
         tuntap_.open(tun_param_, ec);
         boost::asio::detail::throw_error(ec);
 
-        auto ipv4_route = route::get_default_ipv4_route();
-        auto ipv6_route = route::get_default_ipv6_route();
-
-        if (ipv4_route)
-            default_if_addr_v4_ = ipv4_route->if_addr;
-        if (ipv6_route)
-            default_if_addr_v6_ = ipv6_route->if_addr;
-
-        spdlog::info("Default network interface v4: {0}", default_if_addr_v4_.to_string());
-        spdlog::info("Default network interface v6: {0}", default_if_addr_v6_.to_string());
-
         if (tun_param_.ipv4) {
             route::route_ipv4 info;
             info.if_addr = boost::asio::ip::make_address_v4(tun_param_.ipv4->addr);
-            info.metric  = 0;
+            info.metric  = 5;
             info.netmask = boost::asio::ip::address_v4::any();
             info.network = boost::asio::ip::address_v4::any();
             route::add_route_ipapi(info);
+
+            // info.if_addr = boost::asio::ip::make_address_v4("172.21.33.78");
+            // info.metric  = 0;
+            // info.netmask = boost::asio::ip::address_v4::any();
+            // info.network = boost::asio::ip::address_v4::any();
+            // route::add_route_ipapi(info);
         }
         if (tun_param_.ipv6) {
             route::route_ipv6 info;
@@ -196,9 +200,9 @@ private:
     {
         auto endpoint_pair = detail::create_endpoint(newpcb);
         auto proxy         = std::make_shared<udp_proxy>(ioc_,
-                                                 endpoint_pair,
-                                                 newpcb,
-                                                 *this);
+                                                         endpoint_pair,
+                                                         newpcb,
+                                                         *this);
         proxy->start();
         udps_[endpoint_pair] = proxy;
 
@@ -248,9 +252,9 @@ private:
 
         auto endpoint_pair = detail::create_endpoint(newpcb);
         auto proxy         = std::make_shared<tcp_proxy>(ioc_,
-                                                 newpcb,
-                                                 endpoint_pair,
-                                                 *this);
+                                                         newpcb,
+                                                         endpoint_pair,
+                                                         *this);
 
         proxy->start();
         tcps_[endpoint_pair] = proxy;
@@ -369,12 +373,25 @@ private:
         if (dest.address().is_loopback())
             return;
 
+        if (!default_adapter_)
+            return;
+
         if (dest.protocol() == InternetProtocol::v4())
-            sock.bind(boost::asio::ip::basic_endpoint<InternetProtocol>(default_if_addr_v4_, 0), ec);
+            sock.bind(boost::asio::ip::basic_endpoint<InternetProtocol>(default_adapter_->v4_address(), 0), ec);
         else
-            sock.bind(boost::asio::ip::basic_endpoint<InternetProtocol>(default_if_addr_v6_, 0), ec);
+            sock.bind(boost::asio::ip::basic_endpoint<InternetProtocol>(default_adapter_->v6_address(), 0), ec);
         if (ec)
             spdlog::error("bind {0}", ec.message());
+#ifdef OS_LINUX
+        if (setsockopt(sock.native_handle(),
+                       SOL_SOCKET,
+                       SO_BINDTODEVICE,
+                       default_adapter_->if_name.c_str(),
+                       default_adapter_->if_name.length()) < 0) {
+            perror("setsockopt failed");
+            return;
+        }
+#endif
     }
     template <typename Stream, typename InternetProtocol>
     inline boost::asio::awaitable<void> connect_socks5_server(
@@ -441,8 +458,6 @@ private:
 private:
     boost::asio::io_context                ioc_;
     tuntap::tuntap                         tuntap_;
-    boost::asio::ip::address_v4            default_if_addr_v4_;
-    boost::asio::ip::address_v6            default_if_addr_v6_;
     parameter::socks5_server               socks5_proxy_;
     parameter::tun_device                  tun_param_;
     std::queue<toys::wrapper::pbuf_buffer> send_queue_;
@@ -453,5 +468,7 @@ private:
 
     connection::open_function  conn_open_func_;
     connection::close_function conn_close_func_;
+
+    std::optional<route::adapter_info> default_adapter_;
 };
 }  // namespace tun2socks

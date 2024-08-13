@@ -18,23 +18,25 @@
 namespace route {
 namespace details {
 
-    struct linux_adapter_info
-    {
-        int                                      if_index;
-        std::string                              if_name;
-        std::vector<boost::asio::ip::address_v4> unicast_addr_v4;
-        std::vector<boost::asio::ip::address_v6> unicast_addr_v6;
-    };
-
     struct linux_route_v4
     {
         boost::asio::ip::address_v4 destination;
         uint8_t                     prefix_length;
         boost::asio::ip::address_v4 gateway;
 
-        int      iface_index;
-        uint32_t metric;
+        int      if_index = -1;
+        uint32_t metric   = 0;
     };
+    struct linux_route_v6
+    {
+        boost::asio::ip::address_v6 destination;
+        uint8_t                     prefix_length;
+        boost::asio::ip::address_v6 gateway;
+
+        int      if_index = -1;
+        uint32_t metric   = 0;
+    };
+
     boost::asio::ip::address_v4 create_ipv4_mask_from_prefix_length(uint8_t prefix_length)
     {
         // 初始化为全0
@@ -52,61 +54,59 @@ namespace details {
             static_cast<uint8_t>((mask >> 8) & 0xFF),
             static_cast<uint8_t>(mask & 0xFF)});
     }
-    inline static std::vector<linux_adapter_info> get_linux_all_adapters()
+    int calculate_prefix_length(const boost::asio::ip::address_v4& address)
     {
-        struct result
-        {
-            struct nl_sock*                 sock = nullptr;
-            std::vector<linux_adapter_info> vec_adapter;
-        };
-        result res;
+        // 将 address 转换为网络字节顺序的 32 位整数
+        uint32_t mask          = address.to_ulong();
+        int      prefix_length = 0;
 
-        struct nl_sock* sock = nl_socket_alloc();
-        if (!sock) {
-            spdlog::error("Failed to allocate netlink socket");
-            return res.vec_adapter;
+        // 计算连续的 1 的数量
+        while (mask) {
+            prefix_length++;
+            mask <<= 1;
         }
-        if (nl_connect(sock, NETLINK_ROUTE) < 0) {
-            spdlog::error("Failed to connect to netlink");
-            nl_socket_free(sock);
-            return res.vec_adapter;
+
+        return prefix_length;
+    }
+    inline static std::vector<adapter_info> get_linux_all_adapters()
+    {
+        std::unordered_map<std::string, adapter_info> map_adapter;
+
+        struct ifaddrs* ifaddr;
+        // 获取接口地址信息
+        if (getifaddrs(&ifaddr) == -1) {
+            perror("getifaddrs");
+            return {};
         }
-        res.sock = sock;
+        for (auto ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+            if ((ifa->ifa_addr) && (ifa->ifa_netmask) && (ifa->ifa_flags & IFF_UP)) {
+                auto& info    = map_adapter[ifa->ifa_name];
+                info.if_name  = ifa->ifa_name;
+                info.if_index = if_nametoindex(ifa->ifa_name);
+                int family    = ifa->ifa_addr->sa_family;
+                if (family == AF_INET6) {
+                    auto addr_in = (struct sockaddr_in6*)ifa->ifa_addr;
 
-        struct nl_cache* link_cache;
-        rtnl_link_alloc_cache(sock, AF_UNSPEC, &link_cache);
+                    boost::asio::ip::address_v6::bytes_type ip_bytes;
+                    memcpy(ip_bytes.data(), addr_in->sin6_addr.__in6_u.__u6_addr8, 16);
 
-        nl_cache_foreach(link_cache, [](struct nl_object* obj, void* arg) {
-            struct rtnl_link* link = (struct rtnl_link*)obj;
-            auto              res  = (result*)arg;
+                    auto v6_addr = boost::asio::ip::make_address_v6(ip_bytes);
+                    info.unicast_addr_v6.push_back(v6_addr);
+                }
+                else {
+                    auto addr_in = (struct sockaddr_in*)ifa->ifa_addr;
+                    auto v4_addr = boost::asio::ip::make_address_v4(::ntohl(addr_in->sin_addr.s_addr));
+                    info.unicast_addr_v4.push_back(v4_addr);
+                }
+            }
+        }
+        freeifaddrs(ifaddr);
 
-            linux_adapter_info info;
+        std::vector<adapter_info> vec_adapter;
+        for (const auto& v : map_adapter)
+            vec_adapter.push_back(v.second);
 
-            info.if_name  = rtnl_link_get_name(link);
-            info.if_index = rtnl_link_get_ifindex(link);
-
-            struct nl_cache* addr_cache;
-            rtnl_addr_alloc_cache(res->sock, &addr_cache);
-
-            nl_cache_foreach(addr_cache,[](struct nl_object *obj,void*arg)
-            {
-                char buffer[128];
-                auto addr = (struct rtnl_addr *)obj;
-                auto info = (linux_adapter_info*)arg;
-
-                struct nl_addr *addr_ip = rtnl_addr_get_local(addr);
-                nl_addr2str(addr_ip,buffer,sizeof(buffer));
-
-                if(rtnl_addr_get_family(addr) == AF_INET6)
-                    info->unicast_addr_v6.push_back(boost::asio::ip::make_address_v6(buffer));
-                else
-                    info->unicast_addr_v4.push_back(boost::asio::ip::make_address_v4(buffer));
-            },&info);
-            nl_cache_free(addr_cache); }, &res);
-
-        nl_cache_free(link_cache);
-        nl_socket_free(sock);
-        return res.vec_adapter;
+        return vec_adapter;
     }
     inline static std::vector<linux_route_v4> get_linux_all_ipv4_route()
     {
@@ -121,8 +121,7 @@ namespace details {
             return route_vec;
         }
 
-        struct rtnl_route* route = rtnl_route_alloc();
-        struct nl_cache*   route_cache;
+        struct nl_cache* route_cache;
         rtnl_route_alloc_cache(sock, AF_INET, 0, &route_cache);
 
         for (nl_object* obj = nl_cache_get_first(route_cache); obj; obj = nl_cache_get_next(obj)) {
@@ -141,33 +140,23 @@ namespace details {
                 info.destination   = boost::asio::ip::make_address_v4(::ntohl(addr.sin_addr.s_addr));
                 info.prefix_length = nl_addr_get_prefixlen(dst);
             }
-            auto nh_count = rtnl_route_get_nnexthops(route);
-            spdlog::info("22222222 {}",nh_count);
+
+            auto nh_count = rtnl_route_get_nnexthops(route_iter);
             for (int i = 0; i < nh_count; ++i) {
                 struct rtnl_nexthop* nh = rtnl_route_nexthop_n(route_iter, i);
-                if (nh) {
-                    struct nl_addr* gateway = rtnl_route_nh_get_gateway(nh);
-                    if (gateway) {
-                        char gateway_str[INET6_ADDRSTRLEN];
-                        nl_addr2str(gateway, gateway_str, sizeof(gateway_str));
-                        printf("Nexthop %d gateway: %s\n", i, gateway_str);
-                    }
+                if (!nh)
+                    continue;
+                info.if_index = rtnl_route_nh_get_ifindex(nh);
+                auto gateway  = rtnl_route_nh_get_gateway(nh);
+                if (gateway) {
+                    struct sockaddr_in addr;
+                    socklen_t          addr_len = sizeof(sockaddr_in);
+                    nl_addr_fill_sockaddr(gateway, (struct sockaddr*)&addr, &addr_len);
+                    info.gateway = boost::asio::ip::make_address_v4(::ntohl(addr.sin_addr.s_addr));
+                    break;
                 }
             }
-
-            spdlog::info("11111111111 {} {} {}", info.destination.to_string(), info.prefix_length, info.metric);
-            {
-                // struct rtnl_nexthop* nh = rtnl_route_nexthop_n(route_iter, 1);
-                // struct nl_addr*      gw = rtnl_route_nh_get_gateway(nh);
-
-                // struct sockaddr_in addr;
-                // socklen_t addr_len = sizeof(sockaddr_in);
-                // nl_addr_fill_sockaddr(gw,(struct sockaddr*)&addr,&addr_len);
-
-                // info.gateway          = boost::asio::ip::make_address_v4(::ntohl(addr.sin_addr.s_addr));
-                // info.iface_index = rtnl_route_nh_get_ifindex(nh);
-            }
-            // spdlog::info("22222222222 {} {}",info.gateway.to_string(),info.iface_index);
+            route_vec.push_back(info);
         }
 
         nl_cache_free(route_cache);
@@ -191,34 +180,174 @@ namespace details {
         }
         return best;
     }
+    inline static std::vector<linux_route_v6> get_linux_all_ipv6_route()
+    {
+        std::vector<linux_route_v6> route_vec;
+        struct nl_sock*             sock = nl_socket_alloc();
+        if (!sock) {
+            return route_vec;
+        }
+
+        if (nl_connect(sock, NETLINK_ROUTE) < 0) {
+            nl_socket_free(sock);
+            return route_vec;
+        }
+
+        struct nl_cache* route_cache;
+        rtnl_route_alloc_cache(sock, AF_INET6, 0, &route_cache);
+
+        for (nl_object* obj = nl_cache_get_first(route_cache); obj; obj = nl_cache_get_next(obj)) {
+            struct rtnl_route* route_iter = (struct rtnl_route*)obj;
+            if (rtnl_route_get_family(route_iter) != AF_INET6)
+                continue;
+
+            struct nl_addr* dst = rtnl_route_get_dst(route_iter);
+
+            linux_route_v6 info;
+            info.metric = rtnl_route_get_priority(route_iter);
+            {
+                struct sockaddr_in6 addr;
+                socklen_t           addr_len = sizeof(sockaddr_in6);
+                nl_addr_fill_sockaddr(dst, (struct sockaddr*)&addr, &addr_len);
+
+                boost::asio::ip::address_v6::bytes_type ip_bytes;
+                memcpy(ip_bytes.data(), addr.sin6_addr.__in6_u.__u6_addr8, 16);
+
+                info.destination   = boost::asio::ip::make_address_v6(ip_bytes);
+                info.prefix_length = nl_addr_get_prefixlen(dst);
+            }
+
+            auto nh_count = rtnl_route_get_nnexthops(route_iter);
+            for (int i = 0; i < nh_count; ++i) {
+                struct rtnl_nexthop* nh = rtnl_route_nexthop_n(route_iter, i);
+                if (!nh)
+                    continue;
+                info.if_index = rtnl_route_nh_get_ifindex(nh);
+                auto gateway  = rtnl_route_nh_get_gateway(nh);
+                if (gateway) {
+                    struct sockaddr_in6 addr;
+                    socklen_t           addr_len = sizeof(sockaddr_in6);
+                    nl_addr_fill_sockaddr(gateway, (struct sockaddr*)&addr, &addr_len);
+
+                    boost::asio::ip::address_v6::bytes_type ip_bytes;
+                    memcpy(ip_bytes.data(), addr.sin6_addr.__in6_u.__u6_addr8, 16);
+                    info.gateway = boost::asio::ip::make_address_v6(ip_bytes);
+                    break;
+                }
+            }
+            route_vec.push_back(info);
+        }
+
+        nl_cache_free(route_cache);
+        nl_socket_free(sock);
+        return route_vec;
+    }
+    inline static std::optional<linux_route_v6> get_linux_default_ipv6_route()
+    {
+        auto                          routes = get_linux_all_ipv6_route();
+        std::optional<linux_route_v6> best;
+
+        for (const auto& route : routes) {
+            if (route.destination.is_unspecified() && route.prefix_length == 0) {
+                if (!best) {
+                    best = route;
+                    continue;
+                }
+                if (route.metric < best->metric)
+                    best = route;
+            }
+        }
+        return best;
+    }
 
 }  // namespace details
-inline std::optional<route_ipv4> get_default_ipv4_route()
+
+inline std::optional<adapter_info> get_default_adapter()
 {
     auto route = details::get_linux_default_ipv4_route();
     if (!route)
         return std::nullopt;
 
     for (const auto& adapter : details::get_linux_all_adapters()) {
-        if (adapter.if_index == route->iface_index) {
-            route_ipv4 info;
-            if (!adapter.unicast_addr_v4.empty())
-                info.if_addr = adapter.unicast_addr_v4.front();
-            info.metric  = route->metric;
-            info.netmask = details::create_ipv4_mask_from_prefix_length(route->prefix_length);
-            info.network = route->destination;
-            return info;
-        }
+        if (adapter.if_index == route->if_index)
+            return adapter;
     }
     return std::nullopt;
 }
-inline std::optional<route_ipv6> get_default_ipv6_route()
-{
-    return std::nullopt;
-}
-
 inline bool add_route_ipapi(const route_ipv4& r)
 {
+    for (const auto& adapter : details::get_linux_all_adapters()) {
+        auto iter = std::find(adapter.unicast_addr_v4.begin(),
+                              adapter.unicast_addr_v4.end(),
+                              r.if_addr);
+
+        if (iter == adapter.unicast_addr_v4.end())
+            continue;
+
+        spdlog::info("!1111111111111111");
+
+        struct nl_sock*      sock;
+        struct rtnl_route*   route;
+        struct rtnl_nexthop* nexthop;
+        int                  err;
+
+        // Initialize Netlink socket
+        sock = nl_socket_alloc();
+        if (!sock) {
+            fprintf(stderr, "Failed to allocate Netlink socket\n");
+            return false;
+        }
+
+        // Connect to the Netlink socket
+        if (nl_connect(sock, NETLINK_ROUTE)) {
+            fprintf(stderr, "Failed to connect Netlink socket\n");
+            nl_socket_free(sock);
+            return false;
+        }
+
+        // Create a new route
+        route = rtnl_route_alloc();
+        if (!route) {
+            fprintf(stderr, "Failed to allocate route\n");
+            nl_socket_free(sock);
+            return false;
+        }
+
+        // Set the destination address (e.g., 192.168.1.0/24)
+        // auto destination = nl_addr_build(AF_INET, r.network.to_string().c_str(), details::calculate_prefix_length(r.netmask));
+        auto destination = nl_addr_build(AF_INET, "0.0.0.0", 0);
+        rtnl_route_set_priority(route, r.metric);
+        rtnl_route_set_dst(route, destination);
+
+        // Set the gateway address (e.g., 192.168.1.1)
+        nexthop = rtnl_route_nh_alloc();
+        if (!nexthop) {
+            fprintf(stderr, "Failed to allocate nexthop\n");
+            nl_addr_put(destination);
+            rtnl_route_put(route);
+            nl_socket_free(sock);
+            return false;
+        }
+        // auto gateway = nl_addr_build(AF_INET, r.if_addr.to_string().c_str(), 0);
+        // rtnl_route_nh_set_gateway(nexthop, gateway);
+        rtnl_route_nh_set_ifindex(nexthop, adapter.if_index);
+        rtnl_route_add_nexthop(route, nexthop);
+
+        // Send the route to the kernel
+        err = rtnl_route_add(sock, route, NLM_F_REPLACE);
+        if (err < 0) {
+            fprintf(stderr, "Failed to add route: %s\n", nl_geterror(err));
+        }
+        else {
+            printf("Route added successfully\n");
+        }
+
+        // Cleanup
+        nl_addr_put(destination);
+        rtnl_route_put(route);
+        nl_socket_free(sock);
+        return true;
+    }
     return false;
 }
 inline bool del_route_ipapi(const route_ipv4& r)

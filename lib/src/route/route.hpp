@@ -23,8 +23,33 @@ struct route_ipv6
     uint32_t                    metric;
 };
 
-inline std::optional<route_ipv4> get_default_ipv4_route();
-inline std::optional<route_ipv6> get_default_ipv6_route();
+struct adapter_info
+{
+#if defined(OS_WINDOWS)
+    uint32_t ipv4_if_index = 0;
+    uint32_t ipv6_if_index = 0;
+#else
+    int if_index = 0;
+#endif
+    std::string if_name;
+
+    std::vector<boost::asio::ip::address_v6> unicast_addr_v6;
+    std::vector<boost::asio::ip::address_v4> unicast_addr_v4;
+
+    inline boost::asio::ip::address_v4 v4_address()
+    {
+        if (unicast_addr_v4.empty())
+            return boost::asio::ip::address_v4::any();
+        return unicast_addr_v4.front();
+    }
+    inline boost::asio::ip::address_v6 v6_address()
+    {
+        if (unicast_addr_v6.empty())
+            return boost::asio::ip::address_v6::any();
+        return unicast_addr_v6.front();
+    }
+};
+inline std::optional<adapter_info> get_default_adapter();
 
 inline bool add_route_ipapi(const route_ipv4& r);
 inline bool del_route_ipapi(const route_ipv4& r);
