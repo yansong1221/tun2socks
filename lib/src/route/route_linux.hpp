@@ -284,8 +284,6 @@ inline bool add_route_ipapi(const route_ipv4& r)
         if (iter == adapter.unicast_addr_v4.end())
             continue;
 
-        spdlog::info("!1111111111111111");
-
         struct nl_sock*      sock;
         struct rtnl_route*   route;
         struct rtnl_nexthop* nexthop;
@@ -314,8 +312,7 @@ inline bool add_route_ipapi(const route_ipv4& r)
         }
 
         // Set the destination address (e.g., 192.168.1.0/24)
-        // auto destination = nl_addr_build(AF_INET, r.network.to_string().c_str(), details::calculate_prefix_length(r.netmask));
-        auto destination = nl_addr_build(AF_INET, "0.0.0.0", 0);
+        auto destination = nl_addr_build(AF_INET, r.network.to_string().c_str(), details::calculate_prefix_length(r.netmask));
         rtnl_route_set_priority(route, r.metric);
         rtnl_route_set_dst(route, destination);
 

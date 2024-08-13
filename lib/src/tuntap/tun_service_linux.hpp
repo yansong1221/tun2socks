@@ -227,6 +227,15 @@ namespace tuntap {
                         boost::asio::ip::make_address_v6(param.ipv6->addr),
                         param.ipv6->prefix_length);
                 }
+                if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
+                    details::log_throw_last_system_error("ioctl");
+                    return;
+                }
+                if (ioctl(fd, TUNGETIFF, &ifr) < 0) {
+                    details::log_throw_last_system_error("ioctl");
+                    return;
+                }
+                ifr.ifr_flags |= IFF_UP;
 
                 ctl_skt = socket(AF_INET, SOCK_DGRAM, 0);
                 if (ctl_skt == -1) {
@@ -234,21 +243,11 @@ namespace tuntap {
                     return;
                 }
 
-                if (ioctl(fd, TUNGETIFF, &ifr) == -1) {
-                    details::log_throw_last_system_error("ioctl");
-                    return;
-                }
-                ifr.ifr_flags |= IFF_UP;
-
-                if (ioctl(ctl_skt, SIOCSIFFLAGS, &ifr) != -1) {
+                if (ioctl(ctl_skt, SIOCSIFFLAGS, &ifr) < 0) {
                     details::log_throw_last_system_error("ioctl");
                     return;
                 }
 
-                if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
-                    details::log_throw_last_system_error("ioctl");
-                    return;
-                }
                 stream_descriptor_.assign(fd);
             }
             catch (const boost::system::system_error& system_error) {

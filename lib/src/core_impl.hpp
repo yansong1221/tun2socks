@@ -134,8 +134,10 @@ private:
 
         default_adapter_ = route::get_default_adapter();
         if (default_adapter_) {
-            spdlog::info("Default network interface v4: {0}", default_adapter_->v4_address().to_string());
-            spdlog::info("Default network interface v6: {0}", default_adapter_->v6_address().to_string());
+            spdlog::info("Default network interface name: {} v4: {} v6: {}",
+                         default_adapter_->if_name,
+                         default_adapter_->v4_address().to_string(),
+                         default_adapter_->v6_address().to_string());
         }
         else {
             spdlog::warn("Failed to obtain default network adapter");
