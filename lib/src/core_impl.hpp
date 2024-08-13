@@ -147,28 +147,7 @@ private:
         tuntap_.open(tun_param_, ec);
         boost::asio::detail::throw_error(ec);
 
-        if (tun_param_.ipv4) {
-            route::route_ipv4 info;
-            info.if_addr = boost::asio::ip::make_address_v4(tun_param_.ipv4->addr);
-            info.metric  = 5;
-            info.netmask = boost::asio::ip::address_v4::any();
-            info.network = boost::asio::ip::address_v4::any();
-            route::add_route_ipapi(info);
-
-            // info.if_addr = boost::asio::ip::make_address_v4("172.21.33.78");
-            // info.metric  = 0;
-            // info.netmask = boost::asio::ip::address_v4::any();
-            // info.network = boost::asio::ip::address_v4::any();
-            // route::add_route_ipapi(info);
-        }
-        if (tun_param_.ipv6) {
-            route::route_ipv6 info;
-            info.if_addr       = boost::asio::ip::make_address_v6(tun_param_.ipv6->addr);
-            info.metric        = 1;
-            info.dest          = boost::asio::ip::address_v6::any();
-            info.prefix_length = 0;
-            route::add_route_ipapi(info);
-        }
+        route::init_route(tun_param_);
 
         lwip::instance().init(ioc_);
         auto t_pcb = lwip::tcp_listen_any();
@@ -202,9 +181,9 @@ private:
     {
         auto endpoint_pair = detail::create_endpoint(newpcb);
         auto proxy         = std::make_shared<udp_proxy>(ioc_,
-                                                         endpoint_pair,
-                                                         newpcb,
-                                                         *this);
+                                                 endpoint_pair,
+                                                 newpcb,
+                                                 *this);
         proxy->start();
         udps_[endpoint_pair] = proxy;
 
@@ -254,9 +233,9 @@ private:
 
         auto endpoint_pair = detail::create_endpoint(newpcb);
         auto proxy         = std::make_shared<tcp_proxy>(ioc_,
-                                                         newpcb,
-                                                         endpoint_pair,
-                                                         *this);
+                                                 newpcb,
+                                                 endpoint_pair,
+                                                 *this);
 
         proxy->start();
         tcps_[endpoint_pair] = proxy;

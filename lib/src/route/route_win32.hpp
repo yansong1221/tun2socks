@@ -12,17 +12,6 @@
 
 namespace route {
 namespace details {
-    struct windows_adapter_info
-    {
-        uint32_t ipv4_if_index = 0;
-        uint32_t ipv6_if_index = 0;
-
-        std::string name;
-
-        std::vector<boost::asio::ip::address_v6> unicast_addr_v6;
-        std::vector<boost::asio::ip::address_v4> unicast_addr_v4;
-    };
-
     struct windows_route_v4
     {
         boost::asio::ip::address_v4 net;
@@ -42,9 +31,9 @@ namespace details {
         uint32_t metric;
     };
 
-    inline static std::vector<windows_adapter_info> get_windows_all_adapters()
+    inline static std::vector<adapter_info> get_windows_all_adapters()
     {
-        std::vector<windows_adapter_info> adapter_vec;
+        std::vector<adapter_info> adapter_vec;
 
         DWORD dwSize   = 0;
         DWORD dwRetVal = 0;
@@ -62,11 +51,11 @@ namespace details {
                 if (pAddresses->OperStatus != IfOperStatusUp)
                     continue;
 
-                windows_adapter_info _adapter_info;
+                adapter_info _adapter_info;
                 _adapter_info.ipv4_if_index = pAddresses->IfIndex;
                 _adapter_info.ipv6_if_index = pAddresses->Ipv6IfIndex;
 
-                _adapter_info.name = misc::utf16_utf8(pAddresses->FriendlyName);
+                _adapter_info.if_name = misc::utf16_utf8(pAddresses->FriendlyName);
                 // Print the Unicast addresses
                 for (IP_ADAPTER_UNICAST_ADDRESS* pUnicast = pAddresses->FirstUnicastAddress; pUnicast;
                      pUnicast                             = pUnicast->Next) {
@@ -176,103 +165,21 @@ namespace details {
         return best;
     }
 
-    inline static std::optional<windows_adapter_info> get_windows_default_adapter()
+    inline bool add_route_ipapi(const windows_route_v4& r)
     {
-        auto route = get_windows_default_ipv4_route();
-        if (!route)
-            return std::nullopt;
-
-        for (const auto& adapter : get_windows_all_adapters()) {
-            if (adapter.ipv4_if_index == route->if_index)
-                return adapter;
-        }
-        return std::nullopt;
-    }
-}  // namespace details
-
-inline std::vector<route_ipv4> get_all_ipv4_route()
-{
-    std::vector<route_ipv4> route_vec;
-
-    auto routes   = details::get_windows_all_ipv4_route();
-    auto adapters = details::get_windows_all_adapters();
-    for (const auto& route : routes) {
-        for (const auto& adapter : adapters) {
-            route_ipv4 info;
-            if (!adapter.unicast_addr_v4.empty())
-                info.if_addr = adapter.unicast_addr_v4.front();
-            info.metric  = route.metric;
-            info.netmask = route.mask;
-            info.network = route.net;
-            route_vec.push_back(info);
-        }
-    }
-    return route_vec;
-}
-
-inline std::optional<route_ipv4> get_default_ipv4_route()
-{
-    auto route = details::get_windows_default_ipv4_route();
-    if (!route)
-        return std::nullopt;
-
-    for (const auto& adapter : details::get_windows_all_adapters()) {
-        if (adapter.ipv4_if_index == route->if_index) {
-            route_ipv4 info;
-            if (!adapter.unicast_addr_v4.empty())
-                info.if_addr = adapter.unicast_addr_v4.front();
-            info.metric  = route->metric;
-            info.netmask = route->mask;
-            info.network = route->net;
-            return info;
-        }
-    }
-    return std::nullopt;
-}
-
-inline std::optional<route_ipv6> get_default_ipv6_route()
-{
-    auto adapter = details::get_windows_default_adapter();
-    if (!adapter)
-        return std::nullopt;
-
-    for (const auto& route : details::get_windows_all_ipv6_route()) {
-        if (route.if_index == adapter->ipv6_if_index) {
-            route_ipv6 info;
-            if (!adapter->unicast_addr_v6.empty())
-                info.if_addr = adapter->unicast_addr_v6.front();
-            info.dest          = route.dest;
-            info.metric        = route.metric;
-            info.prefix_length = route.prefix_length;
-            return info;
-        }
-    }
-    return std::nullopt;
-}
-
-inline bool add_route_ipapi(const route_ipv4& r)
-{
-    bool  ret = false;
-    DWORD status;
-
-    for (const auto& adapter : details::get_windows_all_adapters()) {
-        auto iter = std::find(adapter.unicast_addr_v4.begin(),
-                              adapter.unicast_addr_v4.end(),
-                              r.if_addr);
-
-        if (iter == adapter.unicast_addr_v4.end())
-            continue;
+        bool  ret = false;
+        DWORD status;
 
         MIB_IPFORWARDROW fr = {0};
 
-        fr.dwForwardDest      = ::htonl(r.network.to_ulong());
-        fr.dwForwardMask      = ::htonl(r.netmask.to_ulong());
+        fr.dwForwardDest      = ::htonl(r.net.to_ulong());
+        fr.dwForwardMask      = ::htonl(r.mask.to_ulong());
         fr.dwForwardPolicy    = 0;
-        fr.dwForwardIfIndex   = adapter.ipv4_if_index;
+        fr.dwForwardIfIndex   = r.if_index;
         fr.dwForwardType      = MIB_IPROUTE_TYPE_INDIRECT; /* the next hop is not the final dest */
         fr.dwForwardProto     = PROTO_IP_NETMGMT;          /* PROTO_IP_NETMGMT */
         fr.dwForwardAge       = 0;
-        fr.dwForwardNextHopAS = 0;
+        fr.dwForwardNextHopAS = ::htonl(r.next_hop.to_ulong());
         fr.dwForwardMetric1   = r.metric;
 
         status = CreateIpForwardEntry(&fr);
@@ -306,55 +213,18 @@ inline bool add_route_ipapi(const route_ipv4& r)
 
         return ret;
     }
-    return false;
-}
-
-inline bool del_route_ipapi(const route_ipv4& r)
-{
-    bool  ret = false;
-    DWORD status;
-
-    for (const auto& adapter : details::get_windows_all_adapters()) {
-        auto iter = std::find(adapter.unicast_addr_v4.begin(),
-                              adapter.unicast_addr_v4.end(),
-                              r.if_addr);
-
-        if (iter == adapter.unicast_addr_v4.end())
-            continue;
-
-        MIB_IPFORWARDROW fr = {0};
-
-        fr.dwForwardDest    = ::htonl(r.network.to_ulong());
-        fr.dwForwardMask    = ::htonl(r.netmask.to_ulong());
-        fr.dwForwardPolicy  = 0;
-        fr.dwForwardIfIndex = adapter.ipv4_if_index;
-
-        status = DeleteIpForwardEntry(&fr);
-
-        if (status == NO_ERROR) {
-            ret = true;
-        }
-    }
-    return ret;
-}
-
-inline bool add_route_ipapi(const route_ipv6& r)
-{
-    for (const auto& adapter : details::get_windows_all_adapters()) {
-        auto iter = std::find(adapter.unicast_addr_v6.begin(),
-                              adapter.unicast_addr_v6.end(),
-                              r.if_addr);
-
-        if (iter == adapter.unicast_addr_v6.end())
-            continue;
-
+    inline bool add_route_ipapi(const windows_route_v6& r)
+    {
         MIB_IPFORWARD_ROW2 route;
         InitializeIpForwardEntry(&route);
 
-        route.InterfaceIndex                     = adapter.ipv6_if_index;
+        route.InterfaceIndex                     = r.if_index;
         route.DestinationPrefix.PrefixLength     = r.prefix_length;
         route.DestinationPrefix.Prefix.si_family = AF_INET6;
         memcpy(route.DestinationPrefix.Prefix.Ipv6.sin6_addr.u.Byte, r.dest.to_bytes().data(), 16);
+
+        route.NextHop.si_family = AF_INET6;
+        memcpy(route.NextHop.Ipv6.sin6_addr.u.Byte, r.next_hop.to_bytes().data(), 16);
 
         route.Protocol = MIB_IPPROTO_NETMGMT;
         route.Metric   = r.metric;
@@ -368,39 +238,45 @@ inline bool add_route_ipapi(const route_ipv6& r)
         }
         return dwRetVal == NO_ERROR;
     }
-    return false;
+}  // namespace details
+
+inline std::optional<adapter_info> get_default_adapter()
+{
+    auto route = details::get_windows_default_ipv4_route();
+    if (!route)
+        return std::nullopt;
+
+    for (const auto& adapter : details::get_windows_all_adapters()) {
+        if (adapter.ipv4_if_index == route->if_index)
+            return adapter;
+    }
+    return std::nullopt;
 }
-inline bool del_route_ipapi(const route_ipv6& r)
+inline void init_route(const tun2socks::parameter::tun_device& tun_param)
 {
     for (const auto& adapter : details::get_windows_all_adapters()) {
-        auto iter = std::find(adapter.unicast_addr_v6.begin(),
-                              adapter.unicast_addr_v6.end(),
-                              r.if_addr);
-
-        if (iter == adapter.unicast_addr_v6.end())
+        if (adapter.if_name != tun_param.tun_name)
             continue;
 
-        MIB_IPFORWARD_ROW2 route;
-        InitializeIpForwardEntry(&route);
-
-        route.InterfaceIndex                     = adapter.ipv6_if_index;
-        route.DestinationPrefix.PrefixLength     = r.prefix_length;
-        route.DestinationPrefix.Prefix.si_family = AF_INET6;
-        memcpy(route.DestinationPrefix.Prefix.Ipv6.sin6_addr.u.Byte, r.dest.to_bytes().data(), 16);
-
-        route.Protocol = MIB_IPPROTO_NETMGMT;
-        route.Metric   = r.metric;
-
-        DWORD dwRetVal = DeleteIpForwardEntry2(&route);
-
-        if (dwRetVal == NO_ERROR) {
-            spdlog::info("Default route deleted successfully.");
+        if (tun_param.ipv4) {
+            details::windows_route_v4 info;
+            info.if_index = adapter.ipv4_if_index;
+            info.metric   = 1;
+            info.mask     = boost::asio::ip::address_v4::any();
+            info.net      = boost::asio::ip::address_v4::any();
+            details::add_route_ipapi(info);
         }
-        else {
-            spdlog::error("DeleteIpForwardEntry2 failed with error: {}", dwRetVal);
+        if (tun_param.ipv6) {
+            details::windows_route_v6 info;
+            info.if_index      = adapter.ipv6_if_index;
+            info.metric        = 1;
+            info.dest          = boost::asio::ip::address_v6::any();
+            info.prefix_length = 0;
+            details::add_route_ipapi(info);
         }
-        return dwRetVal == NO_ERROR;
+        return;
     }
-    return false;
 }
+
+
 }  // namespace route
