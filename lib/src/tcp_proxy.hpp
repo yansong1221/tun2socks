@@ -49,7 +49,7 @@ public:
         boost::asio::co_spawn(
             get_io_context(),
             [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
-                socket_ = co_await core_.create_proxy_socket(endpoint_pair());
+                socket_ = co_await core_.create_proxy_socket(shared_from_this());
                 if (!socket_ || !pcb_) {
                     do_close();
                     co_return;
@@ -155,7 +155,7 @@ private:
                 boost::system::error_code ec;
                 socket_->close(ec);
             }
-            core_.close_endpoint_pair(endpoint_pair());
+            core_.close_endpoint_pair(shared_from_this());
         }
     }
     void try_send()

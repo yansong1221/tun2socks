@@ -1,6 +1,7 @@
 #pragma once
 #include "endpoint_pair.hpp"
 #include "network_monitor.hpp"
+#include "process_info/process_info.hpp"
 #include <tun2socks/connection.h>
 
 namespace tun2socks {
@@ -13,6 +14,10 @@ public:
         : boost::asio::detail::service_base<basic_connection<InternetProtocol>>(ioc),
           endpoint_pair_(endpoint_pair)
     {
+        pid_ = process_info::get_pid(endpoint_pair.src.port());
+        if (pid_)
+            execute_path_ = process_info::get_execute_path(*pid_);
+
         net_monitor_ = std::make_shared<network_monitor>(ioc);
         net_monitor_->start();
     }
@@ -22,6 +27,14 @@ public:
     }
 
 public:
+    virtual std::optional<uint32_t> get_pid() const override
+    {
+        return pid_;
+    }
+    virtual std::optional<std::string> get_execute_path() const override
+    {
+        return execute_path_;
+    }
     conn_type type() const override
     {
         if constexpr (std::is_same_v<boost::asio::ip::tcp, InternetProtocol>)
@@ -29,7 +42,7 @@ public:
         else if constexpr (std::is_same_v<boost::asio::ip::udp, InternetProtocol>)
             return connection::conn_type::udp;
         else
-            static_assert(std::is_same_v<InternetProtocol,InternetProtocol>, "error internet protocol");
+            static_assert(std::is_same_v<InternetProtocol, InternetProtocol>, "error internet protocol");
     }
     std::string local_endpoint() const override
     {
@@ -83,6 +96,9 @@ public:
 private:
     std::shared_ptr<network_monitor>      net_monitor_;
     basic_endpoint_pair<InternetProtocol> endpoint_pair_;
+
+    std::optional<uint32_t>    pid_;
+    std::optional<std::string> execute_path_;
 };
 
 using tcp_basic_connection = basic_connection<boost::asio::ip::tcp>;

@@ -99,7 +99,7 @@ public:
 
         ioc_.dispatch([&]() mutable -> void {
             for (const auto& v : udps_)
-                result.push_back(v.second);
+                result.push_back(v);
 
             done.set_value();
         });
@@ -116,7 +116,7 @@ public:
 
         ioc_.dispatch([&]() mutable -> void {
             for (const auto& v : tcps_)
-                result.push_back(v.second);
+                result.push_back(v);
 
             done.set_value();
         });
@@ -181,11 +181,11 @@ private:
     {
         auto endpoint_pair = detail::create_endpoint(newpcb);
         auto proxy         = std::make_shared<udp_proxy>(ioc_,
-                                                 endpoint_pair,
-                                                 newpcb,
-                                                 *this);
+                                                         endpoint_pair,
+                                                         newpcb,
+                                                         *this);
         proxy->start();
-        udps_[endpoint_pair] = proxy;
+        udps_.insert(proxy);
 
         if (conn_open_func_)
             conn_open_func_(proxy);
@@ -233,12 +233,12 @@ private:
 
         auto endpoint_pair = detail::create_endpoint(newpcb);
         auto proxy         = std::make_shared<tcp_proxy>(ioc_,
-                                                 newpcb,
-                                                 endpoint_pair,
-                                                 *this);
+                                                         newpcb,
+                                                         endpoint_pair,
+                                                         *this);
 
         proxy->start();
-        tcps_[endpoint_pair] = proxy;
+        tcps_.insert(proxy);
         if (conn_open_func_)
             conn_open_func_(proxy);
         return ERR_OK;
@@ -261,24 +261,24 @@ private:
     };
 
     boost::asio::awaitable<tcp_socket_ptr> create_proxy_socket(
-        const tcp_endpoint_pair& endpoint_pair) override
+        std::shared_ptr<tcp_basic_connection> conn) override
     {
-        spdlog::info("TCP proxy: {}", endpoint_pair.to_string());
+        spdlog::info("TCP proxy: {}", conn->endpoint_pair().to_string());
 
         auto socket = std::make_shared<boost::asio::ip::tcp::socket>(
             co_await boost::asio::this_coro::executor);
 
-        if (proxy_policy_.is_direct(endpoint_pair)) {
+        if (proxy_policy_.is_direct(*conn)) {
             boost::system::error_code ec;
-            open_bind_socket(*socket, endpoint_pair.dest, ec);
+            open_bind_socket(*socket, conn->endpoint_pair().dest, ec);
             if (ec)
                 co_return nullptr;
 
-            co_await socket->async_connect(endpoint_pair.dest, net_awaitable[ec]);
+            co_await socket->async_connect(conn->endpoint_pair().dest, net_awaitable[ec]);
             if (ec) {
                 spdlog::warn("Failed to connect to remote TCP endpoint [{0}]:{1}",
-                             endpoint_pair.dest.address().to_string(),
-                             endpoint_pair.dest.port());
+                             conn->endpoint_pair().dest.address().to_string(),
+                             conn->endpoint_pair().dest.port());
                 co_return nullptr;
             }
         }
@@ -286,34 +286,34 @@ private:
             boost::system::error_code ec;
 
             boost::asio::ip::tcp::endpoint remote_endp;
-            co_await connect_socks5_server(*socket, endpoint_pair.dest, remote_endp, ec);
+            co_await connect_socks5_server(*socket, conn->endpoint_pair().dest, remote_endp, ec);
             if (ec)
                 co_return nullptr;
         }
         co_return socket;
     }
     boost::asio::awaitable<udp_socket_ptr> create_proxy_socket(
-        const udp_endpoint_pair&        endpoint_pair,
-        boost::asio::ip::udp::endpoint& proxy_endpoint) override
+        std::shared_ptr<udp_basic_connection> conn,
+        boost::asio::ip::udp::endpoint&       proxy_endpoint) override
     {
-        spdlog::info("UDP proxy: {}", endpoint_pair.to_string());
+        spdlog::info("UDP proxy: {}", conn->endpoint_pair().to_string());
 
         auto socket = std::make_shared<boost::asio::ip::udp::socket>(
             co_await boost::asio::this_coro::executor);
 
-        if (proxy_policy_.is_direct(endpoint_pair)) {
+        if (proxy_policy_.is_direct(*conn)) {
             boost::system::error_code ec;
-            open_bind_socket(*socket, endpoint_pair.dest, ec);
+            open_bind_socket(*socket, conn->endpoint_pair().dest, ec);
             if (ec)
                 co_return nullptr;
-            proxy_endpoint = endpoint_pair.dest;
+            proxy_endpoint = conn->endpoint_pair().dest;
         }
         else {
             boost::asio::ip::tcp::socket proxy_sock(co_await boost::asio::this_coro::executor);
 
             boost::system::error_code      ec;
             boost::asio::ip::udp::endpoint remote_endp;
-            co_await connect_socks5_server(proxy_sock, endpoint_pair.dest, remote_endp, ec);
+            co_await connect_socks5_server(proxy_sock, conn->endpoint_pair().dest, remote_endp, ec);
             if (ec)
                 co_return nullptr;
 
@@ -321,25 +321,25 @@ private:
         }
         co_return socket;
     }
-    void close_endpoint_pair(const udp_endpoint_pair& endp_pair) override
+    void close_endpoint_pair(std::shared_ptr<udp_basic_connection> conn) override
     {
-        auto iter = udps_.find(endp_pair);
+        auto iter = udps_.find(conn);
         if (iter == udps_.end())
             return;
 
         if (conn_close_func_)
-            conn_close_func_(iter->second);
+            conn_close_func_(conn);
 
         udps_.erase(iter);
     }
-    void close_endpoint_pair(const tcp_endpoint_pair& endp_pair) override
+    void close_endpoint_pair(std::shared_ptr<tcp_basic_connection> conn) override
     {
-        auto iter = tcps_.find(endp_pair);
+        auto iter = tcps_.find(conn);
         if (iter == tcps_.end())
             return;
 
         if (conn_close_func_)
-            conn_close_func_(iter->second);
+            conn_close_func_(conn);
 
         tcps_.erase(iter);
     }
@@ -444,8 +444,8 @@ private:
     std::queue<toys::wrapper::pbuf_buffer> send_queue_;
     proxy_policy_impl                      proxy_policy_;
 
-    std::unordered_map<udp_endpoint_pair, udp_proxy::ptr> udps_;
-    std::unordered_map<tcp_endpoint_pair, tcp_proxy::ptr> tcps_;
+    std::unordered_set<std::shared_ptr<udp_basic_connection>> udps_;
+    std::unordered_set<std::shared_ptr<tcp_basic_connection>> tcps_;
 
     connection::open_function  conn_open_func_;
     connection::close_function conn_close_func_;

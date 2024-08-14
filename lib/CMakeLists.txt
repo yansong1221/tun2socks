@@ -67,10 +67,12 @@ elseif(MSVC)
 	)
 elseif(UNIX AND NOT APPLE)
 	find_package(PkgConfig REQUIRED)
+	
 	pkg_check_modules(LIBNL REQUIRED libnl-3.0 libnl-genl-3.0 libnl-route-3.0)
-	target_include_directories(${MODULE} PUBLIC ${LIBNL_INCLUDE_DIRS})
-	target_link_directories(${MODULE} PUBLIC ${LIBNL_INCLUDE_DIRS})
-	target_link_libraries(${MODULE} PUBLIC ${LIBNL_LIBRARIES})
+	pkg_check_modules(PROCPS REQUIRED libprocps)
+
+	target_include_directories(${MODULE} PUBLIC ${LIBNL_INCLUDE_DIRS} ${PROCPS_INCLUDE_DIRS})
+	target_link_libraries(${MODULE} PUBLIC ${LIBNL_LIBRARIES} ${PROCPS_LIBRARIES})
 endif()
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${HEADER_FILES} ${SRC_FILES})
@@ -93,6 +95,7 @@ PRIVATE Boost::asio
 PRIVATE spdlog::spdlog fmt::fmt
 PUBLIC lwipcore
 )
+target_compile_definitions(${MODULE} PRIVATE BOOST_BIND_GLOBAL_PLACEHOLDERS)
 
 if(MSVC)
 	#target_compile_definitions(${MODULE} PRIVATE _WIN32_WINDOWS)

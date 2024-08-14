@@ -1,6 +1,5 @@
 #pragma once
-#include "endpoint_pair.hpp"
-#include "process_info/process_info.hpp"
+#include "basic_connection.hpp"
 #include <atomic>
 #include <boost/asio.hpp>
 #include <filesystem>
@@ -18,30 +17,46 @@ public:
     {
     }
     template <typename InternetProtocol>
-    inline bool is_direct(const basic_endpoint_pair<InternetProtocol>& endpoint_pair)
+    inline bool is_direct(const basic_connection<InternetProtocol>& conn)
     {
-        if (auto iter = addresses_.find(endpoint_pair.dest.address());
-            iter != addresses_.end())
-            return iter->second;
+        const auto& endpoint_pair = conn.endpoint_pair();
+        auto        dest_addr     = endpoint_pair.dest.address();
 
-        auto pid = process_info::get_pid(endpoint_pair.src.port());
+        if (auto iter = addresses_.find(dest_addr);
+            iter != addresses_.end()) {
+            spdlog::info("Match to Dest IP address: {} direct: {}",
+                         dest_addr.to_string(),
+                         iter->second);
+            return iter->second;
+        }
+
+        auto pid = conn.get_pid();
         if (!pid) {
             spdlog::warn("Process information for port not found: {}", endpoint_pair.to_string());
             return default_direct_;
         }
         if (auto iter = process_pid_.find(*pid);
-            iter != process_pid_.end())
+            iter != process_pid_.end()) {
+            spdlog::info("Match to pid: {} direct: {}",
+                         *pid,
+                         iter->second);
             return iter->second;
+        }
 
-        auto exe_path = process_info::get_execute_path(*pid);
-        if (!exe_path)
+        auto exe_path = conn.get_execute_path();
+        if (!exe_path) {
+            spdlog::warn("Process process path for pid not found: {}, {}", *pid, endpoint_pair.to_string());
             return default_direct_;
+        }
 
         auto p = std::filesystem::path(*exe_path).lexically_normal().string();
         if (auto iter = process_path_.find(p);
-            iter != process_path_.end())
+            iter != process_path_.end()) {
+            spdlog::info("Match to process path: {} direct: {}",
+                         p,
+                         iter->second);
             return iter->second;
-
+        }
         return default_direct_;
     }
 
