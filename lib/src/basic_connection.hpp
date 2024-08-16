@@ -1,5 +1,5 @@
 #pragma once
-#include "endpoint_pair.hpp"
+#include "net/endpoint_pair.hpp"
 #include "network_monitor.hpp"
 #include "process_info/process_info.hpp"
 #include <tun2socks/connection.h>
@@ -9,8 +9,8 @@ namespace tun2socks {
 template <typename InternetProtocol>
 class basic_connection : public connection, public boost::asio::detail::service_base<basic_connection<InternetProtocol>> {
 public:
-    basic_connection(boost::asio::io_context&                     ioc,
-                     const basic_endpoint_pair<InternetProtocol>& endpoint_pair)
+    basic_connection(boost::asio::io_context&                          ioc,
+                     const net::basic_endpoint_pair<InternetProtocol>& endpoint_pair)
         : boost::asio::detail::service_base<basic_connection<InternetProtocol>>(ioc),
           endpoint_pair_(endpoint_pair)
     {
@@ -84,7 +84,7 @@ public:
         return net_monitor_->get_total_upload_bytes();
     }
 
-    const basic_endpoint_pair<InternetProtocol>& endpoint_pair() const
+    const net::basic_endpoint_pair<InternetProtocol>& endpoint_pair() const
     {
         return endpoint_pair_;
     };
@@ -94,8 +94,8 @@ public:
     };
 
 private:
-    std::shared_ptr<network_monitor>      net_monitor_;
-    basic_endpoint_pair<InternetProtocol> endpoint_pair_;
+    std::shared_ptr<network_monitor>           net_monitor_;
+    net::basic_endpoint_pair<InternetProtocol> endpoint_pair_;
 
     std::optional<uint32_t>    pid_;
     std::optional<std::string> execute_path_;

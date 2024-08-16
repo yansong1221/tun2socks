@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lwip/src/include/)
 add_subdirectory(lwip)
 
-find_package(Boost REQUIRED COMPONENTS asio)
+find_package(Boost REQUIRED COMPONENTS asio multiprecision)
 find_package(spdlog CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 
@@ -36,13 +36,18 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/route/route.hpp
 
 ${CMAKE_CURRENT_SOURCE_DIR}/src/process_info/process_info.hpp
 
+${CMAKE_CURRENT_SOURCE_DIR}/src/net/ip.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/net/udp.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/net/tcp.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/net/checksum.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/net/address_pair.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/net/endpoint_pair.hpp
 
+${CMAKE_CURRENT_SOURCE_DIR}/src/buffer.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/basic_connection.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/core_impl_api.h
 ${CMAKE_CURRENT_SOURCE_DIR}/src/misc.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/udp_proxy.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/address_pair.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/endpoint_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/core.cpp
@@ -91,7 +96,7 @@ target_include_directories(${MODULE}
 )
 
 target_link_libraries(${MODULE} 
-PRIVATE Boost::asio
+PRIVATE Boost::asio Boost::multiprecision
 PRIVATE spdlog::spdlog fmt::fmt
 PUBLIC lwipcore
 )

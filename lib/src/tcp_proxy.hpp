@@ -20,7 +20,7 @@ public:
 public:
     tcp_proxy(boost::asio::io_context& ioc,
               struct tcp_pcb*          pcb,
-              tcp_endpoint_pair        local_endpoint_pair,
+              net::tcp_endpoint_pair   local_endpoint_pair,
               core_impl_api&           core)
         : tcp_basic_connection(ioc, local_endpoint_pair),
           pcb_(pcb),

@@ -1,6 +1,6 @@
 #pragma once
 #include "basic_connection.hpp"
-#include "endpoint_pair.hpp"
+#include "net/endpoint_pair.hpp"
 
 namespace tun2socks {
 

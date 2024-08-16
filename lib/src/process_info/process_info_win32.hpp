@@ -18,110 +18,117 @@
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "Iphlpapi.lib")
 #pragma comment(lib, "Psapi.lib")
-#include <iostream>
 
+#include <filesystem>
+#include <spdlog/spdlog.h>
 namespace process_info {
 
-inline static DWORD tcp_using_port(USHORT port)
+void trim_right(std::string& str)
 {
-    DWORD pid = 0;
-    // 初始化 Winsock
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        return pid;
-    }
-
-    // 获取 TCP 表
-    PMIB_TCPTABLE_OWNER_PID pTcpTable = NULL;
-    ULONG                   ulSize    = 0;
-    if (GetExtendedTcpTable(NULL, &ulSize, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) != ERROR_INSUFFICIENT_BUFFER) {
-        return pid;
-    }
-    pTcpTable = (MIB_TCPTABLE_OWNER_PID*)malloc(ulSize);
-    if (pTcpTable == NULL) {
-        WSACleanup();
-        return pid;
-    }
-
-    if (GetExtendedTcpTable(pTcpTable, &ulSize, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) == NO_ERROR) {
-        for (int i = 0; i < (int)pTcpTable->dwNumEntries; i++) {
-            USHORT localPort = ::ntohs((u_short)pTcpTable->table[i].dwLocalPort);
-            if (localPort == port) {
-                pid = pTcpTable->table[i].dwOwningPid;
-                break;
-            }
-        }
-    }
-
-    // 清理
-    free(pTcpTable);
-    WSACleanup();
-    return pid;
+    while (!str.empty() && (str.back() == '\n' || str.back() == '\r'))
+        str.pop_back();
 }
 
-inline static DWORD udp_using_port(USHORT port)
+std::optional<std::string> GetExecutablePath(DWORD pid)
 {
-    DWORD pid = 0;
-    // 初始化 Winsock
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        return pid;
-    }
-
-    // 获取 UDP 表
-    PMIB_UDPTABLE_OWNER_PID pUdpTable;
-    ULONG                   ulSize = 0;
-    if (GetExtendedUdpTable(NULL, &ulSize, TRUE, AF_INET, UDP_TABLE_OWNER_PID, 0) != ERROR_INSUFFICIENT_BUFFER) {
-        return pid;
-    }
-    pUdpTable = (MIB_UDPTABLE_OWNER_PID*)malloc(ulSize);
-    if (pUdpTable == NULL) {
-        WSACleanup();
-        return pid;
-    }
-    if (GetExtendedUdpTable(pUdpTable, &ulSize, TRUE, AF_INET, UDP_TABLE_OWNER_PID, 0) == NO_ERROR) {
-        for (int i = 0; i < (int)pUdpTable->dwNumEntries; i++) {
-            USHORT localPort = ::ntohs((u_short)pUdpTable->table[i].dwLocalPort);
-            if (localPort == port) {
-                pid = pUdpTable->table[i].dwOwningPid;
-                break;
-            }
-        }
-    }
-    // 清理
-    free(pUdpTable);
-    WSACleanup();
-    return pid;
-}
-inline std::optional<uint32_t> get_pid(uint16_t port)
-{
-    auto processID = tcp_using_port(port);
-    if (processID == 0)
-        processID = udp_using_port(port);
-
-    if (processID == 0)
+    char command[256];
+    snprintf(command, sizeof(command), "powershell -command \"(Get-Process -Id %d).Path\"", pid);
+    FILE* pipe = _popen(command, "r");
+    if (!pipe)
         return std::nullopt;
 
-    return processID;
+    char        buffer[128];
+    std::string result = "";
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        result += buffer;
+    }
+    trim_right(result);
+    _pclose(pipe);
+
+    std::error_code ec;
+    if (!std::filesystem::exists(result, ec))
+        return std::nullopt;
+
+    return result;
+}
+
+inline std::optional<uint32_t> get_pid(uint16_t port)
+{
+    std::vector<uint8_t> buffer;
+    ULONG                ulSize = 0;
+    if (GetExtendedTcpTable(NULL, &ulSize, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) == ERROR_INSUFFICIENT_BUFFER) {
+        buffer.resize(ulSize);
+        auto pTcpTable = (PMIB_TCPTABLE_OWNER_PID)buffer.data();
+
+        if (GetExtendedTcpTable(pTcpTable, &ulSize, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) == NO_ERROR) {
+            for (int i = 0; i < (int)pTcpTable->dwNumEntries; i++) {
+                USHORT localPort = ::ntohs((u_short)pTcpTable->table[i].dwLocalPort);
+                if (localPort == port)
+                    return pTcpTable->table[i].dwOwningPid;
+            }
+        }
+    }
+
+    if (GetExtendedTcpTable(NULL, &ulSize, TRUE, AF_INET6, TCP_TABLE_OWNER_PID_ALL, 0) == ERROR_INSUFFICIENT_BUFFER) {
+        buffer.resize(ulSize);
+        auto pTcpTable = (PMIB_TCP6TABLE_OWNER_PID)buffer.data();
+
+        if (GetExtendedTcpTable(pTcpTable, &ulSize, TRUE, AF_INET6, TCP_TABLE_OWNER_PID_ALL, 0) == NO_ERROR) {
+            for (int i = 0; i < (int)pTcpTable->dwNumEntries; i++) {
+                USHORT localPort = ::ntohs((u_short)pTcpTable->table[i].dwLocalPort);
+                if (localPort == port)
+                    return pTcpTable->table[i].dwOwningPid;
+            }
+        }
+    }
+
+    if (GetExtendedUdpTable(NULL, &ulSize, TRUE, AF_INET, UDP_TABLE_OWNER_PID, 0) == ERROR_INSUFFICIENT_BUFFER) {
+        buffer.resize(ulSize);
+        auto pUdpTable = (MIB_UDPTABLE_OWNER_PID*)buffer.data();
+
+        if (GetExtendedUdpTable(pUdpTable, &ulSize, TRUE, AF_INET, UDP_TABLE_OWNER_PID, 0) == NO_ERROR) {
+            for (int i = 0; i < (int)pUdpTable->dwNumEntries; i++) {
+                USHORT localPort = ::ntohs((u_short)pUdpTable->table[i].dwLocalPort);
+                if (localPort == port)
+                    return pUdpTable->table[i].dwOwningPid;
+            }
+        }
+    }
+
+    if (GetExtendedUdpTable(NULL, &ulSize, TRUE, AF_INET6, UDP_TABLE_OWNER_PID, 0) == ERROR_INSUFFICIENT_BUFFER) {
+        buffer.resize(ulSize);
+        auto pUdpTable = (MIB_UDP6TABLE_OWNER_PID*)buffer.data();
+
+        if (GetExtendedUdpTable(pUdpTable, &ulSize, TRUE, AF_INET6, UDP_TABLE_OWNER_PID, 0) == NO_ERROR) {
+            for (int i = 0; i < (int)pUdpTable->dwNumEntries; i++) {
+                USHORT localPort = ::ntohs((u_short)pUdpTable->table[i].dwLocalPort);
+                if (localPort == port)
+                    return pUdpTable->table[i].dwOwningPid;
+            }
+        }
+    }
+    return std::nullopt;
 }
 inline std::optional<std::string> get_execute_path(uint32_t pid)
 {
-    // 获取进程快照
-    auto hModuleSnap = CreateToolhelp32Snapshot(TH32CS_SNAPALL, pid);
-    if (hModuleSnap == INVALID_HANDLE_VALUE)
-        return std::nullopt;
-
-    MODULEENTRY32 me32;
-    me32.dwSize = sizeof(MODULEENTRY32);
-
-    // 获取第一个进程信息
-    if (Module32First(hModuleSnap, &me32)) {
-        CloseHandle(hModuleSnap);
-        return me32.szExePath;
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, TRUE, pid);
+    if (hProcess == nullptr) {
+        auto p = GetExecutablePath(pid);
+        if (!p)
+            spdlog::error("Failed to open process pid: {}.", pid);
+        return p;
     }
 
-    CloseHandle(hModuleSnap);
-    return std::nullopt;
+    char path[MAX_PATH];
+    if (!GetModuleFileNameExA(hProcess, nullptr, path, MAX_PATH)) {
+        CloseHandle(hProcess);
+        spdlog::error("Failed to get process image name.");
+        return std::nullopt;
+    }
+    else {
+        CloseHandle(hProcess);
+        return path;
+    }
 }
 
 inline uint32_t get_current_pid()

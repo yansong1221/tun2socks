@@ -16,7 +16,7 @@ public:
     using ptr = std::shared_ptr<udp_proxy>;
 
     explicit udp_proxy(boost::asio::io_context& ioc,
-                       const udp_endpoint_pair& endpoint_pair,
+                       const net::udp_endpoint_pair& endpoint_pair,
                        struct udp_pcb*          pcb,
                        core_impl_api&           core)
         : udp_basic_connection(ioc, endpoint_pair),
@@ -32,7 +32,7 @@ public:
 public:
     void start()
     {
-        lwip::lwip_udp_set_timeout(pcb_, 1000 * 60);
+        lwip::lwip_udp_set_timeout(pcb_, 1000 * 5);
         lwip::lwip_udp_timeout(pcb_, [this](struct udp_pcb* pcb) {
             if (pcb == nullptr)
                 return;

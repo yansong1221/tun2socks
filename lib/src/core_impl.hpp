@@ -14,8 +14,8 @@
 namespace tun2socks {
 
 namespace detail {
-    inline static address_pair_type create_address_pair(const ip_addr_t& local_ip,
-                                                        const ip_addr_t& remote_ip)
+    inline static net::address_pair_type create_address_pair(const ip_addr_t& local_ip,
+                                                             const ip_addr_t& remote_ip)
     {
         if (local_ip.type == IPADDR_TYPE_V4) {
             // IP addresses are always in network order.
@@ -24,7 +24,7 @@ namespace detail {
             boost::asio::ip::address_v4 src_ip(
                 boost::asio::detail::socket_ops::network_to_host_long(remote_ip.u_addr.ip4.addr));
 
-            return address_pair_type(src_ip, dest_ip);
+            return net::address_pair_type(src_ip, dest_ip);
         }
         else {
             // IP addresses are always in network order.
@@ -34,29 +34,29 @@ namespace detail {
             memcpy(dest_ip.data(), local_ip.u_addr.ip6.addr, 16);
             memcpy(src_ip.data(), remote_ip.u_addr.ip6.addr, 16);
 
-            return address_pair_type(src_ip, dest_ip);
+            return net::address_pair_type(src_ip, dest_ip);
         }
     }
-    inline static udp_endpoint_pair create_endpoint(struct udp_pcb* newpcb)
+    inline static net::udp_endpoint_pair create_endpoint(struct udp_pcb* newpcb)
     {  // Ports are always in host byte order.
         auto src_port  = newpcb->remote_port;
         auto dest_port = newpcb->local_port;
         auto addr_pair = detail::create_address_pair(newpcb->local_ip,
                                                      newpcb->remote_ip);
 
-        return udp_endpoint_pair(addr_pair,
-                                 src_port,
-                                 dest_port);
+        return net::udp_endpoint_pair(addr_pair,
+                                      src_port,
+                                      dest_port);
     }
-    inline static tcp_endpoint_pair create_endpoint(struct tcp_pcb* newpcb)
+    inline static net::tcp_endpoint_pair create_endpoint(struct tcp_pcb* newpcb)
     {  // Ports are always in host byte order.
         auto src_port  = newpcb->remote_port;
         auto dest_port = newpcb->local_port;
         auto addr_pair = detail::create_address_pair(newpcb->local_ip,
                                                      newpcb->remote_ip);
-        return tcp_endpoint_pair(addr_pair,
-                                 src_port,
-                                 dest_port);
+        return net::tcp_endpoint_pair(addr_pair,
+                                      src_port,
+                                      dest_port);
     }
 }  // namespace detail
 
@@ -94,37 +94,33 @@ public:
     }
     std::vector<connection::weak_ptr> udp_connections()
     {
-        std::vector<connection::weak_ptr> result;
-        std::promise<void>                done;
-
-        ioc_.dispatch([&]() mutable -> void {
-            for (const auto& v : udps_)
-                result.push_back(v);
-
-            done.set_value();
-        });
         if (!is_runing())
-            ioc_.poll_one();
+            return {};
 
-        done.get_future().wait();
-        return result;
+        auto result = std::make_shared<std::promise<std::vector<connection::weak_ptr>>>();
+        ioc_.dispatch([this, result]() mutable -> void {
+            std::vector<connection::weak_ptr> items;
+            for (const auto& v : udps_)
+                items.push_back(v);
+
+            result->set_value(items);
+        });
+        return result->get_future().get();
     }
     std::vector<connection::weak_ptr> tcp_connections()
     {
-        std::vector<connection::weak_ptr> result;
-        std::promise<void>                done;
-
-        ioc_.dispatch([&]() mutable -> void {
-            for (const auto& v : tcps_)
-                result.push_back(v);
-
-            done.set_value();
-        });
         if (!is_runing())
-            ioc_.poll_one();
+            return {};
 
-        done.get_future().wait();
-        return result;
+        auto result = std::make_shared<std::promise<std::vector<connection::weak_ptr>>>();
+        ioc_.dispatch([this, result]() mutable -> void {
+            std::vector<connection::weak_ptr> items;
+            for (const auto& v : tcps_)
+                items.push_back(v);
+
+            result->set_value(items);
+        });
+        return result->get_future().get();
     }
 
 private:
@@ -181,9 +177,9 @@ private:
     {
         auto endpoint_pair = detail::create_endpoint(newpcb);
         auto proxy         = std::make_shared<udp_proxy>(ioc_,
-                                                         endpoint_pair,
-                                                         newpcb,
-                                                         *this);
+                                                 endpoint_pair,
+                                                 newpcb,
+                                                 *this);
         proxy->start();
         udps_.insert(proxy);
 
@@ -233,9 +229,9 @@ private:
 
         auto endpoint_pair = detail::create_endpoint(newpcb);
         auto proxy         = std::make_shared<tcp_proxy>(ioc_,
-                                                         newpcb,
-                                                         endpoint_pair,
-                                                         *this);
+                                                 newpcb,
+                                                 endpoint_pair,
+                                                 *this);
 
         proxy->start();
         tcps_.insert(proxy);
@@ -248,7 +244,7 @@ private:
     {
         for (;;) {
             boost::system::error_code  ec;
-            toys::wrapper::pbuf_buffer buffer(65532);
+            toys::wrapper::pbuf_buffer buffer(65532, pbuf_type::PBUF_RAM);
 
             auto bytes = co_await tuntap_.async_read_some(buffer.data(), ec);
             if (ec)

@@ -4,7 +4,6 @@
 #include "lwip/pbuf.h"
 #include <boost/asio/buffer.hpp>
 #include <cstdint>
-
 namespace toys {
 namespace wrapper {
 
