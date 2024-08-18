@@ -43,29 +43,18 @@ namespace net {
     class ip {
     public:
         using output_function        = std::function<void(shared_buffer)>;
-        using next_protocol_function = std::function<void(const address_pair_type& addr_pair, shared_buffer buffer)>;
-
-    public:
-        ip()
-        {
-        }
-        ~ip()
-        {
-        }
+        using next_protocol_function = std::function<void(const address_pair_type&, shared_buffer)>;
 
     public:
         void input(shared_buffer buffer)
         {
             auto buffers = buffer.data();
-
-            auto buf = boost::asio::buffer_cast<const uint8_t*>(buffers);
-            auto len = boost::asio::buffer_size(buffers);
-
-            if (len == 0) {
+            if (buffers.size() == 0) {
                 SPDLOG_INFO("Received packet is empty");
                 return;
             }
-            uint8_t version = (buf[0] & 0xf0) >> 4;
+            auto    data    = boost::asio::buffer_cast<uint8_t*>(buffers);
+            uint8_t version = (data[0] & 0xf0) >> 4;
             if (version == 6)
                 input6(buffer);
             else
@@ -103,7 +92,7 @@ namespace net {
 
             auto header     = boost::asio::buffer_cast<const details::ipv4_header*>(buffers);
             auto header_len = header->ihl * 4;
-            auto total_len  = ntohs(header->tot_len);
+            auto total_len  = boost::asio::detail::socket_ops::network_to_host_short(header->tot_len);
             auto proto      = header->protocol;
 
             if (header_len < sizeof(details::ipv4_header) || total_len != len || total_len < header_len) {
@@ -233,8 +222,10 @@ namespace net {
         }
 
     private:
-        output_function                                                output_;
-        std::unordered_map<uint8_t, std::list<next_protocol_function>> protocol_observe_;
+        using protocol_map = std::unordered_map<uint8_t, std::list<next_protocol_function>>;
+
+        output_function output_;
+        protocol_map    protocol_observe_;
     };
 }  // namespace net
 }  // namespace tun2socks

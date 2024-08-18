@@ -316,9 +316,9 @@ namespace net {
             SPDLOG_DEBUG("Received IPv{0} TCP Packet {1}", addr_pair.ip_version(), endpoint_pair.to_string());
 
             tcp::header header_data;
-            header_data.seq_num     = ntohl(header->seq_num);
-            header_data.ack_num     = ntohl(header->ack_num);
-            header_data.window_size = ntohs(header->window_size);
+            header_data.seq_num     = boost::asio::detail::socket_ops::network_to_host_long(header->seq_num);
+            header_data.ack_num     = boost::asio::detail::socket_ops::network_to_host_long(header->ack_num);
+            header_data.window_size = boost::asio::detail::socket_ops::network_to_host_short(header->window_size);
             header_data.flags.data  = header->flags;
 
             buffer.consume_front(header_len);
