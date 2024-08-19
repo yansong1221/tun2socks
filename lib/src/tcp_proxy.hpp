@@ -13,7 +13,7 @@
 
 namespace tun2socks {
 
-class tcp_proxy : public tcp_basic_connection, public std::enable_shared_from_this<tcp_proxy> {
+class tcp_proxy : public tcp_basic_connection {
 public:
     using ptr = std::shared_ptr<tcp_proxy>;
 
@@ -25,14 +25,6 @@ public:
         : tcp_basic_connection(ioc, local_endpoint_pair),
           pcb_(pcb),
           core_(core)
-    {
-    }
-    ~tcp_proxy()
-    {
-        spdlog::info("TCP disconnect: {}", endpoint_pair().to_string());
-    }
-
-    void start()
     {
         lwip::lwip_tcp_receive(pcb_, std::bind(&tcp_proxy::on_recved,
                                                this,
@@ -46,6 +38,15 @@ public:
                                             std::placeholders::_1,
                                             std::placeholders::_2,
                                             std::placeholders::_3));
+    }
+    ~tcp_proxy()
+    {
+        spdlog::info("TCP disconnect: {}", endpoint_pair().to_string());
+    }
+
+protected:
+    virtual void on_connection_start() override
+    {
         boost::asio::co_spawn(
             get_io_context(),
             [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
@@ -65,12 +66,27 @@ public:
                         co_return;
                     }
                     buffer.realloc(bytes);
-                    net_monitor().update_download_bytes(bytes);
+                    update_download_bytes(bytes);
                     this->send_queue_.push(buffer);
                     try_send();
                 }
             },
             boost::asio::detached);
+    }
+    virtual void on_connection_stop() override
+    {
+        if (!pcb_)
+            return;
+
+        lwip::lwip_tcp_sent(pcb_, nullptr);
+        lwip::lwip_tcp_receive(pcb_, nullptr);
+        lwip::lwip_tcp_close(pcb_);
+        pcb_ = nullptr;
+
+        if (socket_) {
+            boost::system::error_code ec;
+            socket_->close(ec);
+        }
     }
 
 private:
@@ -97,7 +113,7 @@ private:
             return ERR_OK;
         }
 
-        if (!socket_ || recved_queue_.size() >= 10)
+        if (!socket_ || recved_queue_.size() >= 100)
             return ERR_MEM;
 
         lwip::instance().lwip_tcp_recved(tpcb, p->tot_len);
@@ -113,7 +129,7 @@ private:
             get_io_context(),
             [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
                 boost::system::error_code ec;
-                while (!recved_queue_.empty()) {
+                while (pcb_ && !recved_queue_.empty()) {
                     const auto& buffer = recved_queue_.front();
                     auto        bytes  = co_await boost::asio::async_write(*socket_,
                                                                            buffer.data(),
@@ -122,7 +138,7 @@ private:
                         do_close();
                         co_return;
                     }
-                    net_monitor().update_upload_bytes(bytes);
+                    update_upload_bytes(bytes);
                     recved_queue_.pop();
                 }
             },
@@ -134,18 +150,6 @@ private:
 private:
     inline void do_close()
     {
-        if (!pcb_)
-            return;
-
-        lwip::lwip_tcp_sent(pcb_, nullptr);
-        lwip::lwip_tcp_receive(pcb_, nullptr);
-        lwip::lwip_tcp_close(pcb_);
-        pcb_ = nullptr;
-
-        if (socket_ && socket_->is_open()) {
-            boost::system::error_code ec;
-            socket_->close(ec);
-        }
         core_.close_endpoint_pair(shared_from_this());
     }
     void try_send()

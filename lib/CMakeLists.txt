@@ -57,7 +57,6 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/core_impl.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/lwip.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/pbuf.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/proxy_policy_impl.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/network_monitor.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.hpp
 )
 if(APPLE)

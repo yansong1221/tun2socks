@@ -326,6 +326,7 @@ private:
         if (conn_close_func_)
             conn_close_func_(conn);
 
+        (*iter)->stop();
         udps_.erase(iter);
     }
     void close_endpoint_pair(std::shared_ptr<tcp_basic_connection> conn) override
@@ -337,6 +338,7 @@ private:
         if (conn_close_func_)
             conn_close_func_(conn);
 
+        (*iter)->stop();
         tcps_.erase(iter);
     }
 
