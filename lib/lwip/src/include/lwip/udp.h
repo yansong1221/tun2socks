@@ -99,9 +99,6 @@ struct udp_pcb {
   /*
 	8. tun2socks: every udp_pcb has its lifetime like NAT.
   */
-  u32_t last_active;
-  u32_t max_timeout;
-  std::function<std::remove_pointer_t<udp_timeout_fn>> timeout;
   std::function<std::remove_pointer_t<udp_crt_fn>> create;
 
   u8_t flags;
@@ -139,8 +136,6 @@ extern struct udp_pcb *udp_pcbs;
   9. tun2socks: The following functions are used to support the management
   of the udp_pcb lifetime.
 */
-void		     udp_set_timeout(struct udp_pcb* pcb, u32_t timeout);
-void	         udp_timeout(struct udp_pcb* pcb, std::function<std::remove_pointer_t<udp_timeout_fn>> timeout_fn);
 void	         udp_create(std::function<std::remove_pointer_t<udp_crt_fn>> create_fn);
 
 /* The following functions is the application layer interface to the

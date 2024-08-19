@@ -39,6 +39,8 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/process_info/process_info.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/net/ip.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/net/udp.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/net/tcp.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/net/tcp.hh
+${CMAKE_CURRENT_SOURCE_DIR}/src/net/packet-util.hh
 ${CMAKE_CURRENT_SOURCE_DIR}/src/net/checksum.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/net/address_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/net/endpoint_pair.hpp

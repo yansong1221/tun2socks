@@ -16,7 +16,9 @@ namespace wrapper {
             if (add_ref)
                 pbuf_ref(data_);
         }
-        pbuf_buffer(uint16_t length, pbuf_type ty = pbuf_type::PBUF_POOL)
+        pbuf_buffer(uint16_t   length,
+                    pbuf_layer layer = pbuf_layer::PBUF_RAW,
+                    pbuf_type  ty    = pbuf_type::PBUF_POOL)
         {
             data_ = pbuf_alloc(pbuf_layer::PBUF_RAW, length, ty);
         }

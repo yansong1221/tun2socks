@@ -244,7 +244,7 @@ private:
     {
         for (;;) {
             boost::system::error_code  ec;
-            toys::wrapper::pbuf_buffer buffer(65532, pbuf_type::PBUF_RAM);
+            toys::wrapper::pbuf_buffer buffer(65532);
 
             auto bytes = co_await tuntap_.async_read_some(buffer.data(), ec);
             if (ec)

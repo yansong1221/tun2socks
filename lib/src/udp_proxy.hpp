@@ -10,19 +10,27 @@
 #include <tun2socks/connection.h>
 
 namespace tun2socks {
-
+using namespace std::chrono_literals;
 class udp_proxy : public udp_basic_connection, public std::enable_shared_from_this<udp_proxy> {
 public:
     using ptr = std::shared_ptr<udp_proxy>;
 
-    explicit udp_proxy(boost::asio::io_context& ioc,
+    explicit udp_proxy(boost::asio::io_context&      ioc,
                        const net::udp_endpoint_pair& endpoint_pair,
-                       struct udp_pcb*          pcb,
-                       core_impl_api&           core)
+                       struct udp_pcb*               pcb,
+                       core_impl_api&                core)
         : udp_basic_connection(ioc, endpoint_pair),
           core_(core),
-          pcb_(pcb)
+          pcb_(pcb),
+          timeout_timer_(ioc)
     {
+        lwip::lwip_udp_recv(pcb_, std::bind(&udp_proxy::on_udp_recved,
+                                            this,
+                                            std::placeholders::_1,
+                                            std::placeholders::_2,
+                                            std::placeholders::_3,
+                                            std::placeholders::_4,
+                                            std::placeholders::_5));
     }
     ~udp_proxy()
     {
@@ -32,19 +40,6 @@ public:
 public:
     void start()
     {
-        lwip::lwip_udp_set_timeout(pcb_, 1000 * 5);
-        lwip::lwip_udp_timeout(pcb_, [this](struct udp_pcb* pcb) {
-            if (pcb == nullptr)
-                return;
-            do_close();
-        });
-        lwip::lwip_udp_recv(pcb_, std::bind(&udp_proxy::on_udp_recved,
-                                            this,
-                                            std::placeholders::_1,
-                                            std::placeholders::_2,
-                                            std::placeholders::_3,
-                                            std::placeholders::_4,
-                                            std::placeholders::_5));
         boost::asio::co_spawn(
             get_io_context(), [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
                 socket_ = co_await core_.create_proxy_socket(shared_from_this(),
@@ -55,8 +50,10 @@ public:
                 }
 
                 boost::system::error_code ec;
-                for (;;) {
-                    toys::wrapper::pbuf_buffer buffer(4096);
+                for (; pcb_;) {
+                    reset_timeout_timer();
+
+                    toys::wrapper::pbuf_buffer buffer(4096, pbuf_layer::PBUF_TRANSPORT);
 
                     auto bytes = co_await socket_->async_receive_from(buffer.data(),
                                                                       proxy_endpoint_,
@@ -69,6 +66,11 @@ public:
                         do_close();
                         co_return;
                     }
+                    if (!pcb_)
+                    {
+                        spdlog::error("do close {}", this->endpoint_pair().to_string());
+                        co_return;
+                    }
                     net_monitor().update_download_bytes(bytes);
                     buffer.realloc(bytes);
                     lwip::lwip_udp_send(pcb_, &buffer);
@@ -78,6 +80,18 @@ public:
     }
 
 private:
+    void reset_timeout_timer()
+    {
+        boost::system::error_code ec;
+        timeout_timer_.cancel(ec);
+
+        timeout_timer_.expires_after(10s);
+        timeout_timer_.async_wait([this](boost::system::error_code ec) {
+            if (ec)
+                return;
+            do_close();
+        });
+    }
     void on_udp_recved(void* arg, struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* addr, u16_t port)
     {
         if (pcb == nullptr)
@@ -100,11 +114,12 @@ private:
             get_io_context(), [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
                 boost::system::error_code ec;
                 while (!send_queue_.empty()) {
-                    const auto& buffer = send_queue_.front();
+                    reset_timeout_timer();
 
-                    auto bytes = co_await socket_->async_send_to(buffer.data(),
-                                                                 proxy_endpoint_,
-                                                                 net_awaitable[ec]);
+                    const auto& buffer = send_queue_.front();
+                    auto        bytes  = co_await socket_->async_send_to(buffer.data(),
+                                                                         proxy_endpoint_,
+                                                                         net_awaitable[ec]);
 
                     if (ec) {
                         spdlog::warn("Sending UDP data failed: [{}]:{} {}",
@@ -114,6 +129,7 @@ private:
                         do_close();
                         co_return;
                     }
+
                     net_monitor().update_upload_bytes(bytes);
                     send_queue_.pop();
                 }
@@ -122,18 +138,21 @@ private:
     }
     void do_close()
     {
-        if (pcb_) {
-            lwip::lwip_udp_timeout(pcb_, nullptr);
-            lwip::lwip_udp_recv(pcb_, nullptr);
-            lwip::lwip_udp_disconnect(pcb_);
-            pcb_ = nullptr;
+        if (!pcb_)
+            return;
 
-            if (socket_ && socket_->is_open()) {
-                boost::system::error_code ec;
-                socket_->close(ec);
-            }
-            core_.close_endpoint_pair(shared_from_this());
+        if (socket_) {
+            boost::system::error_code ec;
+            socket_->close(ec);
         }
+        spdlog::info("do_close: {}", this->endpoint_pair().to_string());
+
+        lwip::lwip_udp_recv(pcb_, nullptr);
+        lwip::lwip_udp_disconnect(pcb_);
+        lwip::lwip_udp_remove(pcb_);
+        pcb_ = nullptr;
+
+        core_.close_endpoint_pair(shared_from_this());
     }
 
 private:
@@ -143,5 +162,7 @@ private:
 
     std::queue<toys::wrapper::pbuf_buffer> send_queue_;
     boost::asio::ip::udp::endpoint         proxy_endpoint_;
+
+    boost::asio::steady_timer timeout_timer_;
 };
 }  // namespace tun2socks

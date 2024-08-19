@@ -54,19 +54,11 @@ public:
                     do_close();
                     co_return;
                 }
-                boost::system::error_code ec;
-                boost::asio::steady_timer try_again_timer(
-                    co_await boost::asio::this_coro::executor);
 
+                boost::system::error_code ec;
                 for (; pcb_;) {
                     toys::wrapper::pbuf_buffer buffer(pcb_->mss);
-                    if (!buffer) {
-                        try_again_timer.expires_from_now(std::chrono::milliseconds(64));
-                        co_await try_again_timer.async_wait(net_awaitable[ec]);
-                        if (ec)
-                            break;
-                        continue;
-                    }
+
                     auto bytes = co_await socket_->async_read_some(buffer.data(), net_awaitable[ec]);
                     if (ec) {
                         do_close();
@@ -105,10 +97,7 @@ private:
             return ERR_OK;
         }
 
-        if (!socket_)
-            return ERR_MEM;
-
-        if (recved_queue_.size() >= 10)
+        if (!socket_ || recved_queue_.size() >= 10)
             return ERR_MEM;
 
         lwip::instance().lwip_tcp_recved(tpcb, p->tot_len);
@@ -145,24 +134,26 @@ private:
 private:
     inline void do_close()
     {
-        if (pcb_) {
-            lwip::lwip_tcp_sent(pcb_, nullptr);
-            lwip::lwip_tcp_receive(pcb_, nullptr);
-            lwip::lwip_tcp_close(pcb_);
-            pcb_ = nullptr;
+        if (!pcb_)
+            return;
 
-            if (socket_ && socket_->is_open()) {
-                boost::system::error_code ec;
-                socket_->close(ec);
-            }
-            core_.close_endpoint_pair(shared_from_this());
+        lwip::lwip_tcp_sent(pcb_, nullptr);
+        lwip::lwip_tcp_receive(pcb_, nullptr);
+        lwip::lwip_tcp_close(pcb_);
+        pcb_ = nullptr;
+
+        if (socket_ && socket_->is_open()) {
+            boost::system::error_code ec;
+            socket_->close(ec);
         }
+        core_.close_endpoint_pair(shared_from_this());
     }
     void try_send()
     {
         while (pcb_ && !send_queue_.empty()) {
             const auto& buf  = send_queue_.front().data();
             err_t       code = lwip::lwip_tcp_write(pcb_, buf.data(), buf.size(), TCP_WRITE_FLAG_COPY);
+
             if (code == ERR_MEM) {
                 return;
             }

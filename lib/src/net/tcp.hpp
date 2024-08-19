@@ -3,6 +3,7 @@
 #include "checksum.hpp"
 #include "endpoint_pair.hpp"
 #include "net/address_pair.hpp"
+#include <map>
 #include <spdlog/spdlog.h>
 
 namespace tun2socks {
@@ -22,7 +23,8 @@ namespace net {
             uint16_t urgent_pointer;  // 紧急指针
         };
 
-        inline static uint16_t tcp_checksum(const address_pair_type& address_pair, const shared_buffer& packet)
+        inline static uint16_t tcp_checksum(const address_pair_type& address_pair,
+                                            const shared_buffer&     packet)
         {
             checksum::checksumer checker;
             if (address_pair.ip_version() == 6) {
@@ -67,7 +69,9 @@ namespace net {
         }
     }  // namespace details
 
-    class tcp {
+    using namespace std::chrono_literals;
+
+    class tcp : public boost::asio::detail::service_base<tcp> {
     public:
         class tcp_pcb;
         using accept_function = std::function<std::weak_ptr<tcp_pcb>>;
@@ -111,12 +115,45 @@ namespace net {
                 ts_last_ack    = 9,
                 ts_time_wait   = 10
             };
-            using close_function = std::function<void(std::weak_ptr<tcp_pcb>)>;
+            using weak_ptr = std::weak_ptr<tcp_pcb>;
+            using ptr      = std::shared_ptr<tcp_pcb>;
 
-            tcp_pcb(tcp& _tcp)
+            using close_function  = std::function<void(tcp_pcb::weak_ptr)>;
+            using recved_function = std::function<void(shared_buffer, boost::system::error_code)>;
+
+            tcp_pcb(tcp& _tcp, const tcp_endpoint_pair& endp_pair)
                 : tcp_(_tcp),
+                  endp_pair_(endp_pair),
+                  remote_endp_pair_(endp_pair.swap()),
+                  timeout_timer_(_tcp.get_io_context()),
                   state_(tcp_state::ts_listen)
             {
+            }
+
+        public:
+            const tcp_endpoint_pair& endp_pair() const
+            {
+                return endp_pair_;
+            }
+
+        private:
+            void reset_timeout_timer()
+            {
+                boost::system::error_code ec;
+                timeout_timer_.cancel(ec);
+                timeout_timer_.expires_after(10s);
+                timeout_timer_.async_wait([this](boost::system::error_code ec) {
+                    if (ec)
+                        return;
+                    do_close();
+                });
+            }
+            void do_rest(uint32_t seq_num, uint32_t ack_num)
+            {
+                tcp::tcp_flags flags;
+                flags.flag.rst = true;
+                flags.flag.ack = true;
+                write_packet(flags, seq_num, ack_num);
             }
 
         private:
@@ -141,83 +178,15 @@ namespace net {
                 switch (state_) {
                     case tcp_state::ts_closed:
                         break;
-                    case tcp_state::ts_listen: {
-                        if (!flags.flag.syn)
-                            break;
-
-                        state_              = tcp_state::ts_syn_rcvd;
-                        client_window_size_ = window_size;
-                        client_seq_num_     = seq_num;
-
-                        tcp::tcp_flags flags;
-                        flags.flag.syn = 1;
-                        flags.flag.ack = 1;
-                        write_packet(flags, server_seq_num_, seq_num + 1);
-
-                    } break;
-                    case tcp_state::ts_syn_rcvd: {
-                        if (!flags.flag.ack)
-                            break;
-
-                        if (ack_num != server_seq_num_ + 1 || seq_num != client_seq_num_ + 1)
-                            break;
-
-                        server_seq_num_++;
-                        client_seq_num_++;
-                        client_window_size_ = window_size;
-
-                        state_ = tcp_state::ts_established;
-                        tcp_.on_established(shared_from_this());
-                    } break;
-                    case tcp_state::ts_established: {
-                        if (!flags.flag.ack) {
-                            return;
-                        }
-                        if (flags.flag.rst) {
-                            do_close();
-                            return;
-                        }
-
-                        if (seq_num == client_seq_num_ - 1 || seq_num < client_seq_num_) {
-                            tcp_packet::tcp_flags flags;
-                            flags.flag.ack = true;
-
-                            write_packet(flags, server_seq_num_, client_seq_num_);
-                            return;
-                        }
-
-                        if (seq_num != client_seq_num_) {
-                            return;
-                        }
-
-                        client_window_size_ = window_size;
-
-                        // 结束包 进行4次挥手
-                        if (flags.flag.fin) {
-                            // state_ = tcp_state::ts_close_wait;
-
-                            // tcp_packet::tcp_flags flags;
-                            // flags.flag.ack = true;
-                            // write_packet(flags, server_seq_num_, seq_num + 1);
-
-                            // boost::system::error_code ec;
-                            // socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-
-                            // state_ = tcp_state::ts_last_ack;
-                            // flags.flag.fin = true;
-                            // write_packet(flags, server_seq_num_, seq_num + 1);
-                            // co_return;
-
-                            tcp_packet::tcp_flags flags;
-                            flags.flag.rst = true;
-                            flags.flag.ack = true;
-                            write_packet(flags, server_seq_num_, seq_num + 1);
-
-                            do_close();
-                            return;
-                        }
-                        write_client_data_to_proxy(packet.payload());
-                    } break;
+                    case tcp_state::ts_listen:
+                        on_tcp_state_listen(header_data, payload);
+                        break;
+                    case tcp_state::ts_syn_rcvd:
+                        on_tcp_state_syn_rcvd(header_data, payload);
+                        break;
+                    case tcp_state::ts_established:
+                        on_tcp_state_established(header_data, payload);
+                        break;
                     case tcp_state::ts_fin_wait_1: {
                         if (ack_num != server_seq_num_) {
                             return;
@@ -247,7 +216,7 @@ namespace net {
                         if (!flags.flag.fin)
                             return;
 
-                        tcp_packet::tcp_flags flags;
+                        tcp::tcp_flags flags;
                         flags.flag.ack = true;
                         write_packet(flags, server_seq_num_, seq_num + 1);
                         do_close();
@@ -273,6 +242,109 @@ namespace net {
             }
 
         private:
+            void do_close()
+            {
+            }
+            void on_tcp_state_listen(const tcp::header& header_data, shared_buffer payload)
+            {
+                auto flags       = header_data.flags;
+                auto seq_num     = header_data.seq_num;
+                auto ack_num     = header_data.ack_num;
+                auto window_size = header_data.window_size;
+
+                if (!flags.flag.syn)
+                    return;
+
+                state_              = tcp_state::ts_syn_rcvd;
+                client_window_size_ = window_size;
+                client_seq_num_     = seq_num;
+
+                tcp::tcp_flags flags;
+                flags.flag.syn = 1;
+                flags.flag.ack = 1;
+                write_packet(flags, server_seq_num_, seq_num + 1);
+                reset_timeout_timer();
+            }
+            void on_tcp_state_syn_rcvd(const tcp::header& header_data, shared_buffer payload)
+            {
+                auto flags       = header_data.flags;
+                auto seq_num     = header_data.seq_num;
+                auto ack_num     = header_data.ack_num;
+                auto window_size = header_data.window_size;
+
+                if (!flags.flag.ack)
+                    return;
+
+                if (ack_num != server_seq_num_ + 1 || seq_num != client_seq_num_ + 1)
+                    return;
+
+                server_seq_num_++;
+                client_seq_num_++;
+                client_window_size_ = window_size;
+
+                state_ = tcp_state::ts_established;
+                tcp_.on_established(shared_from_this());
+                reset_timeout_timer();
+            }
+            void on_tcp_state_established(const tcp::header& header_data, shared_buffer payload)
+            {
+                auto flags       = header_data.flags;
+                auto seq_num     = header_data.seq_num;
+                auto ack_num     = header_data.ack_num;
+                auto window_size = header_data.window_size;
+
+                if (!flags.flag.ack) {
+                    return;
+                }
+                if (flags.flag.rst) {
+                    do_close();
+                    return;
+                }
+
+                // Keepalive
+                if (seq_num == client_seq_num_ - 1) {
+                    tcp::tcp_flags flags;
+                    flags.flag.ack = true;
+
+                    write_packet(flags, server_seq_num_, client_seq_num_);
+                    return;
+                }
+                if (seq_num < client_seq_num_)
+                    return;
+
+                if (seq_num >= client_seq_num_) {
+                    out_of_order_packet_[seq_num] = payload;
+                }
+
+                if (seq_num != client_seq_num_) {
+                    return;
+                }
+
+                client_window_size_ = window_size;
+
+                // 结束包 进行4次挥手
+                if (flags.flag.fin) {
+                    // state_ = tcp_state::ts_close_wait;
+
+                    // tcp_packet::tcp_flags flags;
+                    // flags.flag.ack = true;
+                    // write_packet(flags, server_seq_num_, seq_num + 1);
+
+                    // boost::system::error_code ec;
+                    // socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+
+                    // state_ = tcp_state::ts_last_ack;
+                    // flags.flag.fin = true;
+                    // write_packet(flags, server_seq_num_, seq_num + 1);
+                    // co_return;
+                    do_rest(server_seq_num_, seq_num + 1);
+                    do_close();
+                    return;
+                }
+                write_client_data_to_proxy(packet.payload());
+            }
+
+        private:
             std::atomic_uint32_t client_seq_num_     = 0;
             std::atomic_uint16_t client_window_size_ = 0xFFFF;
 
@@ -280,8 +352,21 @@ namespace net {
             std::atomic_uint16_t server_window_size_ = 0xFFFF;
             tcp_state            state_;
 
-            tcp& tcp_;
+            tcp&                      tcp_;
+            tcp_endpoint_pair         endp_pair_;
+            tcp_endpoint_pair         remote_endp_pair_;
+            boost::asio::steady_timer timeout_timer_;
+
+            recved_function recved_func_;
+
+            std::map<uint32_t, shared_buffer> out_of_order_packet_;
         };
+
+    public:
+        tcp(boost::asio::io_context& ioc)
+            : boost::asio::detail::service_base<tcp>(ioc)
+        {
+        }
 
     public:
         void input(const address_pair_type& addr_pair, shared_buffer buffer)
@@ -325,9 +410,20 @@ namespace net {
         }
 
     private:
-        void on_established(std::shared_ptr<tcp_pcb> pcb)
+        void on_established(tcp::tcp_pcb::ptr pcb)
         {
         }
+        void on_pcb_remove(tcp::tcp_pcb::ptr pcb)
+        {
+            boost::asio::post(get_io_context(), [this, pcb]() {
+                pcbs_.erase(pcb->endp_pair());
+            });
+        }
+
+    private:
+        using pcb_map = std::unordered_map<tcp_endpoint_pair, tcp::tcp_pcb::ptr>;
+
+        pcb_map pcbs_;
     };
 }  // namespace net
 }  // namespace tun2socks

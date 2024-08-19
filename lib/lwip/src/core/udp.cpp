@@ -83,14 +83,6 @@ void udp_create(std::function<std::remove_pointer_t<udp_crt_fn>> create_fn) {
 	udp_create_fn = create_fn;
 }
 
-void udp_timeout(struct udp_pcb* pcb, std::function<std::remove_pointer_t<udp_timeout_fn>> timeout_fn) {
-	pcb->timeout = timeout_fn;
-}
-
-void udp_set_timeout(struct udp_pcb* pcb, u32_t timeout) {
-	pcb->max_timeout = timeout;
-}
-
 /* last local UDP port */
 static u16_t udp_port = UDP_LOCAL_PORT_RANGE_START;
 
@@ -329,29 +321,8 @@ udp_input(struct pbuf *p, struct netif *inp)
     pcb = uncon_pcb;
   }
 
-  /*
-	11. tun2socks: ocb is checked here.
-	1. if the pcb is null, it means that a new connection should be created.
-	2. if the pcb is not null but it reaches the timeout, the pcb should be removed.
-	3. if the pcb is not null and it doesn't reach the timeout, we let it go.
-  */
-  now = sys_now();
-  if (pcb != NULL) {
-	  // oops, timeout!
-	  if ((s32_t)(now - (pcb->last_active + pcb->max_timeout)) > 0) {
-		  if (pcb->timeout != NULL)
-			  pcb->timeout(pcb);
-		  udp_remove(pcb);
-		  pcb = NULL; // just like we didn't find any matched pcb.
-	  }
-	  else {
-		  pcb->last_active = now;
-	  }
-  }
-
   if (pcb == NULL && udp_create_fn != NULL) {
       pcb = udp_new();
-      pcb->last_active = now;
       pcb->local_port = dest;
       memcpy(&pcb->local_ip, ip_current_dest_addr(), sizeof(pcb->local_ip));
       // udp_connect
@@ -361,8 +332,6 @@ udp_input(struct pbuf *p, struct netif *inp)
       // udp_bind
       pcb->next = udp_pcbs;
       udp_pcbs = pcb;
-      // update last_active_time
-      pcb->last_active = now;
       // maybe handle ERR_ABRT here?
       udp_create_fn(pcb);
   }
@@ -1300,7 +1269,6 @@ udp_new(void)
 		7. tun2socks: but don't forget to initialize the callbacks.
 	*/
 #ifdef LWIP_CALLBACK_API
-	pcb->timeout = NULL;
 	pcb->recv = NULL;
 	pcb->create = NULL;
 #endif

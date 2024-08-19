@@ -73,11 +73,11 @@ namespace net {
 
     using namespace std::chrono_literals;
 
-    class udp {
+    class udp : public boost::asio::detail::service_base<udp> {
     public:
         class udp_pcb;
 
-        using output_function = std::function<void(const address_pair_type&, shared_buffer buffer)>;
+        using output_function = std::function<void(uint8_t proto, const address_pair_type&, shared_buffer buffer)>;
         using open_function   = std::function<void(std::weak_ptr<udp_pcb>)>;
 
         class udp_pcb : public std::enable_shared_from_this<udp_pcb> {
@@ -89,10 +89,11 @@ namespace net {
             using timeout_function = std::function<void(udp_pcb::weak_ptr)>;
 
         public:
-            udp_pcb(const udp_endpoint_pair& endp_pair)
-                : endp_pair_(endp_pair),
-                  remote_endp_pair_(endp_pair.swap()),
-                  last_active_time_(std::chrono::steady_clock::now())
+            udp_pcb(udp& _udp, const udp_endpoint_pair& endp_pair)
+                : udp_(_udp),
+                  timeout_timer_(_udp.get_io_context()),
+                  endp_pair_(endp_pair),
+                  remote_endp_pair_(endp_pair.swap())
             {
             }
 
@@ -104,10 +105,10 @@ namespace net {
 
             void send(shared_buffer buffer)
             {
-                if (!active_)
+                if (closed_)
                     return;
 
-                last_active_time_ = std::chrono::steady_clock::now();
+                reset_timeout_timer();
 
                 auto remote_addr_pair = remote_endp_pair_.to_address_pair();
 
@@ -122,75 +123,78 @@ namespace net {
                 header->length   = boost::asio::detail::socket_ops::host_to_network_short(buffer.size());
                 header->checksum = details::udp_checksum(buffer, remote_addr_pair);
 
-                if (output_func_)
-                    output_func_(remote_addr_pair, buffer);
+                udp_.on_pcb_output(remote_addr_pair, buffer);
             }
             void disconnect()
             {
-                if (!active_)
+                if (closed_)
                     return;
 
-                active_ = false;
+                closed_ = true;
+                udp_.on_pcb_remove(shared_from_this());
             }
             void set_recved_function(recved_function func)
             {
-                recved_ = func;
+                recved_func_ = func;
             }
             void set_timeout_function(timeout_function func)
             {
                 timeout_func_ = func;
             }
-            bool is_active() const
-            {
-                return active_;
-            }
 
         private:
-            void set_output_function(output_function func)
+            void reset_timeout_timer()
             {
-                output_func_ = func;
-            }
-
-            void update()
-            {
-                if (!active_)
+                if (closed_)
                     return;
 
-                if (is_timeout()) {
+                boost::system::error_code ec;
+                timeout_timer_.cancel(ec);
+
+                timeout_timer_.expires_after(timeout_seconds_);
+                timeout_timer_.async_wait([this](boost::system::error_code ec) {
+                    if (ec)
+                        return;
+
                     if (timeout_func_)
                         timeout_func_(shared_from_this());
-                    active_ = false;
-                }
+
+                    disconnect();
+                });
             }
             void recved(shared_buffer buffer)
             {
-                if (!active_)
+                if (closed_)
                     return;
 
-                last_active_time_ = std::chrono::steady_clock::now();
-                if (recved_)
-                    recved_(buffer);
-            }
-            bool is_timeout() const
-            {
-                auto now = std::chrono::steady_clock::now();
-                return now - last_active_time_ >= timeout_seconds_;
+                reset_timeout_timer();
+                if (recved_func_)
+                    recved_func_(buffer);
             }
 
         private:
-            std::weak_ptr<udp>                    udp_;
-            udp_endpoint_pair                     endp_pair_;
-            udp_endpoint_pair                     remote_endp_pair_;
-            std::chrono::steady_clock::time_point last_active_time_;
-            recved_function                       recved_;
-            timeout_function                      timeout_func_;
-            output_function                       output_func_;
-            bool                                  active_          = true;
-            std::chrono::seconds                  timeout_seconds_ = 10s;
+            udp&              udp_;
+            udp_endpoint_pair endp_pair_;
+            udp_endpoint_pair remote_endp_pair_;
+
+            recved_function  recved_func_;
+            timeout_function timeout_func_;
+
+            std::chrono::seconds timeout_seconds_ = 10s;
+
+            boost::asio::steady_timer timeout_timer_;
+            bool                      closed_ = false;
+
             friend class udp;
         };
 
         constexpr static uint8_t protocol = 17;
+
+    public:
+        udp(boost::asio::io_context& ioc)
+            : boost::asio::detail::service_base<udp>(ioc)
+        {
+        }
 
     public:
         void input(const address_pair_type& addr_pair, shared_buffer buffer)
@@ -223,44 +227,43 @@ namespace net {
             auto pcb = pcbs_[point_pair];
             if (!pcb) {
                 pcb = std::make_shared<udp_pcb>(point_pair);
-                pcb->set_output_function([this](const address_pair_type& addr_pair, shared_buffer buffer) {
-                    if (output_)
-                        output_(addr_pair, buffer);
-                });
+
                 pcbs_[point_pair] = pcb;
 
-                if (udp_opened_)
-                    udp_opened_(pcb);
+                if (udp_opened_func_)
+                    udp_opened_func_(pcb);
             }
             pcb->recved(buffer);
         }
 
         void set_output_function(output_function func)
         {
-            output_ = func;
+            output_func_ = func;
         }
         void set_udp_open_function(open_function func)
         {
-            udp_opened_ = func;
-        }
-        void update()
-        {
-            for (const auto& v : pcbs_)
-                v.second->update();
-
-            for (auto iter = pcbs_.begin(); iter != pcbs_.end();) {
-                if (!iter->second->is_active()) {
-                    iter = pcbs_.erase(iter);
-                    continue;
-                }
-                iter++;
-            }
+            udp_opened_func_ = func;
         }
 
     private:
-        std::unordered_map<udp_endpoint_pair, udp::udp_pcb::ptr> pcbs_;
-        output_function                                          output_;
-        open_function                                            udp_opened_;
+        void on_pcb_remove(udp::udp_pcb::ptr pcb)
+        {
+            boost::asio::post(this->get_io_context(), [this, pcb]() {
+                pcbs_.erase(pcb->endp_pair());
+            });
+        }
+        void on_pcb_output(const address_pair_type& addr_pair, shared_buffer buffer)
+        {
+            if (output_func_)
+                output_func_(udp::protocol, addr_pair, buffer);
+        }
+
+    private:
+        using pcb_map = std::unordered_map<udp_endpoint_pair, udp::udp_pcb::ptr>;
+
+        pcb_map         pcbs_;
+        output_function output_func_;
+        open_function   udp_opened_func_;
     };
 }  // namespace net
 }  // namespace tun2socks

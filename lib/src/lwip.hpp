@@ -93,21 +93,10 @@ public:
         return ::tcp_sent(pcb, sent);
     }
 
-    inline static void lwip_udp_timeout(
-        struct udp_pcb*                                      pcb,
-        std::function<std::remove_pointer_t<udp_timeout_fn>> timeout_fn)
-    {
-        return udp_timeout(pcb, timeout_fn);
-    }
 
     inline static void lwip_udp_create(std::function<std::remove_pointer_t<udp_crt_fn>> create_fn)
     {
         return udp_create(create_fn);
-    }
-
-    inline static void lwip_udp_set_timeout(udp_pcb* pcb, u32_t timeout)
-    {
-        return udp_set_timeout(pcb, timeout);
     }
 
     inline static void lwip_udp_recv(struct udp_pcb*                                       pcb,
