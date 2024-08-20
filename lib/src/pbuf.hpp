@@ -4,7 +4,7 @@
 #include "lwip/pbuf.h"
 #include <boost/asio/buffer.hpp>
 #include <cstdint>
-namespace toys {
+namespace tun2socks {
 namespace wrapper {
 
     class pbuf_buffer {
@@ -18,7 +18,7 @@ namespace wrapper {
         }
         pbuf_buffer(uint16_t   length,
                     pbuf_layer layer = pbuf_layer::PBUF_RAW,
-                    pbuf_type  ty    = pbuf_type::PBUF_POOL)
+                    pbuf_type  ty    = pbuf_type::PBUF_RAM)
         {
             data_ = pbuf_alloc(pbuf_layer::PBUF_RAW, length, ty);
         }
@@ -83,6 +83,6 @@ namespace wrapper {
     };
 
 }  // namespace wrapper
-}  // namespace toys
+}  // namespace tun2socks
 
 #endif  // TUN2SOCKS_PBUF_HPP

@@ -34,10 +34,10 @@ namespace checksum {
                 len--;
             }
             auto p64 = reinterpret_cast<const uint64_t*>(data);
-            while (len >= 8) {
+            /*while (len >= 8) {
                 sum_ += details::ntohll(*p64++);
                 len -= 8;
-            }
+            }*/
             auto p16 = reinterpret_cast<const uint16_t*>(p64);
             while (len >= 2) {
                 sum_ += boost::asio::detail::socket_ops::network_to_host_short(*p16++);

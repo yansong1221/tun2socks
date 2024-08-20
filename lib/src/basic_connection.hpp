@@ -1,8 +1,8 @@
 #pragma once
 #include "net/endpoint_pair.hpp"
-#include "network_monitor.hpp"
 #include "process_info/process_info.hpp"
 #include <tun2socks/connection.h>
+#include "use_awaitable.hpp"
 
 namespace tun2socks {
 

@@ -63,9 +63,9 @@ namespace net {
         void output(uint8_t proto, const address_pair_type& addr_pair, shared_buffer buffer)
         {
             if (addr_pair.ip_version() == 6)
-                output4(proto, addr_pair, buffer);
-            else
                 output6(proto, addr_pair, buffer);
+            else
+                output4(proto, addr_pair, buffer);
         }
 
         void set_ip_packet_output(output_function func)

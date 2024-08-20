@@ -74,7 +74,11 @@ namespace net {
     class tcp : public boost::asio::detail::service_base<tcp> {
     public:
         class tcp_pcb;
-        using accept_function = std::function<std::weak_ptr<tcp_pcb>>;
+
+        using accept_function = std::function<void(std::weak_ptr<tcp_pcb>)>;
+        using output_function = std::function<void(uint8_t proto, const address_pair_type&, shared_buffer buffer)>;
+
+        constexpr static uint8_t protocol = 6;
 
         union tcp_flags
         {
@@ -118,8 +122,8 @@ namespace net {
             using weak_ptr = std::weak_ptr<tcp_pcb>;
             using ptr      = std::shared_ptr<tcp_pcb>;
 
-            using close_function  = std::function<void(tcp_pcb::weak_ptr)>;
-            using recved_function = std::function<void(shared_buffer, boost::system::error_code)>;
+            using close_function  = std::function<void()>;
+            using recved_function = std::function<bool(shared_buffer)>;
 
             tcp_pcb(tcp& _tcp, const tcp_endpoint_pair& endp_pair)
                 : tcp_(_tcp),
@@ -135,6 +139,24 @@ namespace net {
             {
                 return endp_pair_;
             }
+            void write(shared_buffer buf)
+            {
+                tcp::tcp_flags flags;
+                flags.flag.ack = true;
+                flags.flag.psh = true;
+
+                write_packet(flags, buf);
+
+                server_seq_num_ += buf.size();
+            }
+            void set_recved_function(recved_function f)
+            {
+                recved_func_ = f;
+            }
+            void set_close_function(close_function f)
+            {
+                close_func_ = f;
+            }
 
         private:
             void reset_timeout_timer()
@@ -145,7 +167,7 @@ namespace net {
                 timeout_timer_.async_wait([this](boost::system::error_code ec) {
                     if (ec)
                         return;
-                    do_close();
+                    do_rest(server_seq_num_, client_seq_num_);
                 });
             }
             void do_rest(uint32_t seq_num, uint32_t ack_num)
@@ -154,6 +176,7 @@ namespace net {
                 flags.flag.rst = true;
                 flags.flag.ack = true;
                 write_packet(flags, seq_num, ack_num);
+                do_close();
             }
 
         private:
@@ -167,6 +190,12 @@ namespace net {
                               uint32_t             ack_num,
                               const shared_buffer& payload = shared_buffer())
             {
+                tcp::header header_data;
+                header_data.seq_num     = seq_num;
+                header_data.ack_num     = ack_num;
+                header_data.flags       = flags;
+                header_data.window_size = server_window_size_;
+                tcp_.output(remote_endp_pair_, header_data, payload);
             }
             void recved(const tcp::header& header_data, shared_buffer payload)
             {
@@ -244,6 +273,12 @@ namespace net {
         private:
             void do_close()
             {
+                if (close_func_)
+                    close_func_();
+
+                boost::system::error_code ec;
+                timeout_timer_.cancel(ec);
+                tcp_.on_pcb_remove(shared_from_this());
             }
             void on_tcp_state_listen(const tcp::header& header_data, shared_buffer payload)
             {
@@ -258,12 +293,13 @@ namespace net {
                 state_              = tcp_state::ts_syn_rcvd;
                 client_window_size_ = window_size;
                 client_seq_num_     = seq_num;
-
-                tcp::tcp_flags flags;
-                flags.flag.syn = 1;
-                flags.flag.ack = 1;
-                write_packet(flags, server_seq_num_, seq_num + 1);
-                reset_timeout_timer();
+                {
+                    tcp::tcp_flags flags;
+                    flags.flag.syn = 1;
+                    flags.flag.ack = 1;
+                    write_packet(flags, server_seq_num_, seq_num + 1);
+                    reset_timeout_timer();
+                }
             }
             void on_tcp_state_syn_rcvd(const tcp::header& header_data, shared_buffer payload)
             {
@@ -282,9 +318,14 @@ namespace net {
                 client_seq_num_++;
                 client_window_size_ = window_size;
 
-                state_ = tcp_state::ts_established;
-                tcp_.on_established(shared_from_this());
-                reset_timeout_timer();
+                if (tcp_.on_established(shared_from_this())) {
+                    state_ = tcp_state::ts_established;
+                    reset_timeout_timer();
+                }
+                else {
+                    state_ = tcp_state::ts_closed;
+                    do_rest(server_seq_num_, client_seq_num_);
+                }
             }
             void on_tcp_state_established(const tcp::header& header_data, shared_buffer payload)
             {
@@ -312,14 +353,14 @@ namespace net {
                 if (seq_num < client_seq_num_)
                     return;
 
-                if (seq_num >= client_seq_num_) {
-                    out_of_order_packet_[seq_num] = payload;
-                }
+                // if (seq_num >= client_seq_num_) {
+                //     out_of_order_packet_[seq_num] = payload;
+                // }
 
                 if (seq_num != client_seq_num_) {
                     return;
                 }
-
+                reset_timeout_timer();
                 client_window_size_ = window_size;
 
                 // 结束包 进行4次挥手
@@ -341,7 +382,19 @@ namespace net {
                     do_close();
                     return;
                 }
-                write_client_data_to_proxy(packet.payload());
+                if (payload.size() == 0) {
+                    return;
+                }
+                if (!recved_func_)
+                    return;
+
+                if (recved_func_(payload)) {
+                    client_seq_num_ += payload.size();
+
+                    tcp::tcp_flags flags;
+                    flags.flag.ack = true;
+                    write_packet(flags);
+                }
             }
 
         private:
@@ -358,8 +411,10 @@ namespace net {
             boost::asio::steady_timer timeout_timer_;
 
             recved_function recved_func_;
+            close_function  close_func_;
 
             std::map<uint32_t, shared_buffer> out_of_order_packet_;
+            friend class tcp;
         };
 
     public:
@@ -369,6 +424,15 @@ namespace net {
         }
 
     public:
+        void set_tcp_output_function(output_function f)
+        {
+            output_func_ = f;
+        }
+        void set_tcp_accept_function(accept_function f)
+        {
+            accept_func_ = f;
+        }
+
         void input(const address_pair_type& addr_pair, shared_buffer buffer)
         {
             auto buffers = buffer.data();
@@ -407,11 +471,49 @@ namespace net {
             header_data.flags.data  = header->flags;
 
             buffer.consume_front(header_len);
+
+            auto pcb = pcbs_[endpoint_pair];
+            if (!pcb) {
+                pcb                  = std::make_shared<tcp_pcb>(*this, endpoint_pair);
+                pcbs_[endpoint_pair] = pcb;
+            }
+            pcb->recved(header_data, buffer);
         }
 
     private:
-        void on_established(tcp::tcp_pcb::ptr pcb)
+        void output(const tcp_endpoint_pair& endp_pair, const tcp::header& header_data, shared_buffer buffer)
         {
+            auto remote_addr_pair = endp_pair.to_address_pair();
+
+            auto header_buf = buffer.prepare_front(sizeof(details::tcp_header));
+            auto header     = boost::asio::buffer_cast<details::tcp_header*>(header_buf);
+            memset(header, 0, sizeof(details::tcp_header));
+
+            header->src_port = boost::asio::detail::socket_ops::host_to_network_short(
+                endp_pair.src.port());
+            header->dest_port = boost::asio::detail::socket_ops::host_to_network_short(
+                endp_pair.dest.port());
+            header->seq_num = boost::asio::detail::socket_ops::host_to_network_long(
+                header_data.seq_num);
+            header->ack_num = boost::asio::detail::socket_ops::host_to_network_long(
+                header_data.ack_num);
+            header->data_offset = sizeof(details::tcp_header) / 4;
+            header->flags       = header_data.flags.data;
+            header->window_size = htons(header_data.window_size);
+
+            header->checksum = details::tcp_checksum(remote_addr_pair, buffer);
+
+            int ret = details::tcp_checksum(remote_addr_pair, buffer);
+            if (output_func_)
+                output_func_(tcp::protocol, remote_addr_pair, buffer);
+        }
+        bool on_established(tcp::tcp_pcb::ptr pcb)
+        {
+            if (!accept_func_)
+                return false;
+
+            accept_func_(pcb);
+            return true;
         }
         void on_pcb_remove(tcp::tcp_pcb::ptr pcb)
         {
@@ -423,7 +525,9 @@ namespace net {
     private:
         using pcb_map = std::unordered_map<tcp_endpoint_pair, tcp::tcp_pcb::ptr>;
 
-        pcb_map pcbs_;
+        pcb_map         pcbs_;
+        accept_function accept_func_;
+        output_function output_func_;
     };
 }  // namespace net
 }  // namespace tun2socks

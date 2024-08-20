@@ -80,6 +80,8 @@ namespace net {
         using output_function = std::function<void(uint8_t proto, const address_pair_type&, shared_buffer buffer)>;
         using open_function   = std::function<void(std::weak_ptr<udp_pcb>)>;
 
+        constexpr static uint8_t protocol = 17;
+
         class udp_pcb : public std::enable_shared_from_this<udp_pcb> {
         public:
             using ptr      = std::shared_ptr<udp::udp_pcb>;
@@ -187,8 +189,6 @@ namespace net {
 
             friend class udp;
         };
-
-        constexpr static uint8_t protocol = 17;
 
     public:
         udp(boost::asio::io_context& ioc)
