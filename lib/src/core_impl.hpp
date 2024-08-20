@@ -1,8 +1,8 @@
 #pragma once
 #include "core_impl_api.h"
-#include "lwip.hpp"
 #include "net/ip.hpp"
 #include "net/tcp.hpp"
+#include "net/udp.hpp"
 #include "process_info/process_info.hpp"
 #include "proxy_policy_impl.hpp"
 #include "route/route.hpp"
@@ -15,59 +15,13 @@
 
 namespace tun2socks {
 
-namespace detail {
-    inline static net::address_pair_type create_address_pair(const ip_addr_t& local_ip,
-                                                             const ip_addr_t& remote_ip)
-    {
-        if (local_ip.type == IPADDR_TYPE_V4) {
-            // IP addresses are always in network order.
-            boost::asio::ip::address_v4 dest_ip(
-                boost::asio::detail::socket_ops::network_to_host_long(local_ip.u_addr.ip4.addr));
-            boost::asio::ip::address_v4 src_ip(
-                boost::asio::detail::socket_ops::network_to_host_long(remote_ip.u_addr.ip4.addr));
-
-            return net::address_pair_type(src_ip, dest_ip);
-        }
-        else {
-            // IP addresses are always in network order.
-            boost::asio::ip::address_v6::bytes_type dest_ip;
-            boost::asio::ip::address_v6::bytes_type src_ip;
-
-            memcpy(dest_ip.data(), local_ip.u_addr.ip6.addr, 16);
-            memcpy(src_ip.data(), remote_ip.u_addr.ip6.addr, 16);
-
-            return net::address_pair_type(src_ip, dest_ip);
-        }
-    }
-    inline static net::udp_endpoint_pair create_endpoint(struct udp_pcb* newpcb)
-    {  // Ports are always in host byte order.
-        auto src_port  = newpcb->remote_port;
-        auto dest_port = newpcb->local_port;
-        auto addr_pair = detail::create_address_pair(newpcb->local_ip,
-                                                     newpcb->remote_ip);
-
-        return net::udp_endpoint_pair(addr_pair,
-                                      src_port,
-                                      dest_port);
-    }
-    inline static net::tcp_endpoint_pair create_endpoint(struct tcp_pcb* newpcb)
-    {  // Ports are always in host byte order.
-        auto src_port  = newpcb->remote_port;
-        auto dest_port = newpcb->local_port;
-        auto addr_pair = detail::create_address_pair(newpcb->local_ip,
-                                                     newpcb->remote_ip);
-        return net::tcp_endpoint_pair(addr_pair,
-                                      src_port,
-                                      dest_port);
-    }
-}  // namespace detail
-
 class core_impl : public thread, public core_impl_api {
 public:
     explicit core_impl()
         : tuntap_(ioc_),
           proxy_policy_(ioc_),
-          tcp_(ioc_)
+          tcp_(ioc_),
+          udp_(ioc_)
     {
     }
     bool start(const parameter::tun_device&    tun_param,
@@ -164,11 +118,15 @@ private:
             if (conn_open_func_)
                 conn_open_func_(proxy);
         });
-        wrapper::lwip::instance().udp_accept([this](wrapper::udp_conn::ptr pcb) {
-            auto endpoint_pair = detail::create_endpoint(pcb->pcb());
-            auto proxy         = std::make_shared<udp_proxy>(ioc_,
-                                                     endpoint_pair,
-                                                     pcb,
+        udp_.set_output_function(std::bind(&net::ip::output, &ip_, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        udp_.set_udp_open_function([this](net::udp::udp_pcb::weak_ptr pcb) {
+            auto ptr = pcb.lock();
+            if (!ptr)
+                return;
+
+            auto proxy = std::make_shared<udp_proxy>(ioc_,
+                                                     ptr->endp_pair(),
+                                                     ptr,
                                                      *this);
             proxy->start();
             udps_.insert(proxy);
@@ -176,8 +134,11 @@ private:
             if (conn_open_func_)
                 conn_open_func_(proxy);
         });
+
         ip_.register_protocol(net::tcp::protocol,
                               std::bind(&net::tcp::input, &tcp_, std::placeholders::_1, std::placeholders::_2));
+        ip_.register_protocol(net::udp::protocol,
+                              std::bind(&net::udp::input, &udp_, std::placeholders::_1, std::placeholders::_2));
 
         ip_.set_ip_packet_output([this](shared_buffer buffer) {
             bool write_in_process = !send_queue_.empty();
@@ -440,5 +401,6 @@ private:
 
     net::ip  ip_;
     net::tcp tcp_;
+    net::udp udp_;
 };
 }  // namespace tun2socks

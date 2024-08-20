@@ -1,8 +1,6 @@
 #pragma once
 #include "basic_connection.hpp"
 #include "core_impl_api.h"
-#include "lwip.hpp"
-#include "pbuf.hpp"
 #include <boost/asio.hpp>
 #include <queue>
 #include <spdlog/spdlog.h>
@@ -16,7 +14,7 @@ public:
 
     explicit udp_proxy(boost::asio::io_context&      ioc,
                        const net::udp_endpoint_pair& endpoint_pair,
-                       wrapper::udp_conn::ptr        pcb,
+                       net::udp::udp_pcb::ptr        pcb,
                        core_impl_api&                core)
         : udp_basic_connection(ioc, endpoint_pair),
           core_(core),
@@ -32,7 +30,7 @@ public:
 protected:
     virtual void on_connection_start() override
     {
-        pcb_->set_recved_function([this, self = shared_from_this()](wrapper::pbuf_buffer buf) {
+        pcb_->set_recved_function([this, self = shared_from_this()](shared_buffer buf) {
             if (!socket_)
                 return;
 
@@ -84,7 +82,7 @@ protected:
                 for (; pcb_;) {
                     reset_timeout_timer();
 
-                    wrapper::pbuf_buffer buffer(4096, pbuf_layer::PBUF_TRANSPORT);
+                    shared_buffer buffer(4096);
 
                     auto bytes = co_await socket_->async_receive_from(buffer.data(),
                                                                       proxy_endpoint_,
@@ -98,16 +96,15 @@ protected:
                         co_return;
                     }
                     update_download_bytes(bytes);
-                    buffer.realloc(bytes);
+                    buffer.resize(bytes);
 
-                    pcb_->write(buffer);
+                    pcb_->send(buffer);
                 }
             },
             boost::asio::detached);
     }
     virtual void on_connection_stop() override
     {
-        pcb_->close();
         if (socket_) {
             boost::system::error_code ec;
             socket_->close(ec);
@@ -128,22 +125,19 @@ private:
             do_close();
         });
     }
-    void on_udp_recved(void* arg, struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* addr, u16_t port)
-    {
-    }
     void do_close()
     {
         core_.close_endpoint_pair(shared_from_this());
     }
 
 private:
-    wrapper::udp_conn::ptr pcb_;
+    net::udp::udp_pcb::ptr pcb_;
 
     core_impl_api::udp_socket_ptr socket_;
     core_impl_api&                core_;
 
-    std::queue<wrapper::pbuf_buffer> send_queue_;
-    boost::asio::ip::udp::endpoint   proxy_endpoint_;
+    std::queue<shared_buffer>      send_queue_;
+    boost::asio::ip::udp::endpoint proxy_endpoint_;
 
     boost::asio::steady_timer timeout_timer_;
 };

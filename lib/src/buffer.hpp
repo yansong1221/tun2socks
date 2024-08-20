@@ -8,7 +8,7 @@ namespace tun2socks {
 class shared_buffer {
 private:
     class shared_buffer_data {
-        using buffer_type = std::vector<uint8_t, boost::fast_pool_allocator<uint8_t>>;
+        using buffer_type = std::vector<uint8_t>;
 
     public:
         explicit shared_buffer_data(std::size_t len, std::size_t offset)
@@ -16,7 +16,10 @@ private:
               offset_(offset)
         {
         }
+        ~shared_buffer_data()
+        {
 
+        }
         const uint8_t* data() const
         {
             return &data_[offset_];

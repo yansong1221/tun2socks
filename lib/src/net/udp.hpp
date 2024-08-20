@@ -116,7 +116,7 @@ namespace net {
 
                 auto header_buf = buffer.prepare_front(sizeof(details::udp_header));
                 auto header     = boost::asio::buffer_cast<details::udp_header*>(header_buf);
-                memset(&header, 0, sizeof(details::udp_header));
+                memset(header, 0, sizeof(details::udp_header));
 
                 header->src_port = boost::asio::detail::socket_ops::host_to_network_short(
                     remote_endp_pair_.src.port());
@@ -226,7 +226,7 @@ namespace net {
 
             auto pcb = pcbs_[point_pair];
             if (!pcb) {
-                pcb = std::make_shared<udp_pcb>(point_pair);
+                pcb = std::make_shared<udp_pcb>(*this, point_pair);
 
                 pcbs_[point_pair] = pcb;
 

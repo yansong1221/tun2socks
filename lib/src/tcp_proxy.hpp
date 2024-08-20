@@ -4,8 +4,6 @@
 
 #include "basic_connection.hpp"
 #include "core_impl_api.h"
-#include "lwip.hpp"
-#include "pbuf.hpp"
 #include "socks_client/socks_client.hpp"
 #include <memory>
 #include <queue>

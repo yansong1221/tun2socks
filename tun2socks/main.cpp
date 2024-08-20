@@ -37,8 +37,8 @@ int main(int argc, char** argv)
     socks5_param.password = "1111";
     // tun2socks_.start(param, "socks5://192.168.101.8:7897");
 
-    tun2socks_.proxy_policy()
-        .set_process(R"(C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe)", false);
+   /* tun2socks_.proxy_policy()
+        .set_process(R"(C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe)", false);*/
     //tun2socks_.proxy_policy().set_process(R"(C:\Program Files\Clash Verge\verge-mihomo.exe)", true);
     tun2socks_.proxy_policy().set_process(10108, true);
     tun2socks_.proxy_policy().set_default_direct(true);

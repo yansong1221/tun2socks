@@ -145,9 +145,10 @@ namespace net {
                 flags.flag.ack = true;
                 flags.flag.psh = true;
 
-                write_packet(flags, buf);
+                auto sz = buf.size();
 
-                server_seq_num_ += buf.size();
+                write_packet(flags, buf);
+                server_seq_num_ += sz;
             }
             void set_recved_function(recved_function f)
             {
@@ -163,7 +164,7 @@ namespace net {
             {
                 boost::system::error_code ec;
                 timeout_timer_.cancel(ec);
-                timeout_timer_.expires_after(10s);
+                timeout_timer_.expires_after(100s);
                 timeout_timer_.async_wait([this](boost::system::error_code ec) {
                     if (ec)
                         return;
@@ -190,6 +191,8 @@ namespace net {
                               uint32_t             ack_num,
                               const shared_buffer& payload = shared_buffer())
             {
+                reset_timeout_timer();
+
                 tcp::header header_data;
                 header_data.seq_num     = seq_num;
                 header_data.ack_num     = ack_num;
@@ -298,7 +301,6 @@ namespace net {
                     flags.flag.syn = 1;
                     flags.flag.ack = 1;
                     write_packet(flags, server_seq_num_, seq_num + 1);
-                    reset_timeout_timer();
                 }
             }
             void on_tcp_state_syn_rcvd(const tcp::header& header_data, shared_buffer payload)
@@ -353,14 +355,6 @@ namespace net {
                 if (seq_num < client_seq_num_)
                     return;
 
-                // if (seq_num >= client_seq_num_) {
-                //     out_of_order_packet_[seq_num] = payload;
-                // }
-
-                if (seq_num != client_seq_num_) {
-                    return;
-                }
-                reset_timeout_timer();
                 client_window_size_ = window_size;
 
                 // 结束包 进行4次挥手
@@ -388,8 +382,28 @@ namespace net {
                 if (!recved_func_)
                     return;
 
-                if (recved_func_(payload)) {
+                if (seq_num != client_seq_num_) {
+                    out_of_order_packet_[seq_num] = payload;
+                    return;
+                }
+
+                if (seq_num == client_seq_num_) {
+                    if (!recved_func_(payload))
+                        return;
+
                     client_seq_num_ += payload.size();
+
+                    while (true) {
+                        auto iter = out_of_order_packet_.find(client_seq_num_);
+                        if (iter == out_of_order_packet_.end())
+                            break;
+
+                        if (!recved_func_(iter->second))
+                            break;
+                        client_seq_num_ += iter->second.size();
+                        out_of_order_packet_.erase(iter);
+                    }
+                    out_of_order_packet_.clear();
 
                     tcp::tcp_flags flags;
                     flags.flag.ack = true;

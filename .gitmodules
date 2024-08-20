@@ -1,3 +1,0 @@
-[submodule "lib/lwip"]
-	path = lib/lwip
-	url = https://github.com/yansong1221/lwip.git

@@ -4,9 +4,6 @@ set(MODULE libtun2socks)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lwip/src/include/)
-add_subdirectory(lwip)
-
 find_package(Boost REQUIRED COMPONENTS asio multiprecision)
 find_package(spdlog CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
@@ -54,8 +51,6 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/tcp_proxy.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/use_awaitable.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/core.cpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/core_impl.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/lwip.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/pbuf.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/proxy_policy_impl.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.hpp
 )
@@ -99,7 +94,6 @@ target_include_directories(${MODULE}
 target_link_libraries(${MODULE} 
 PRIVATE Boost::asio Boost::multiprecision
 PRIVATE spdlog::spdlog fmt::fmt
-PUBLIC lwipcore
 )
 target_compile_definitions(${MODULE} PRIVATE BOOST_BIND_GLOBAL_PLACEHOLDERS)
 
