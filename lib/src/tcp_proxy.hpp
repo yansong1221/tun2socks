@@ -66,8 +66,8 @@ protected:
                     if (!pcb_)
                         co_return;
 
-                    err_t code = lwip::lwip_tcp_write(pcb_, buffer, bytes, TCP_WRITE_FLAG_COPY);
-                    if (code != ERR_OK) {
+                    err_t err = lwip::lwip_tcp_write(pcb_, buffer, bytes, TCP_WRITE_FLAG_COPY);
+                    if (err != ERR_OK) {
                         do_close();
                         co_return;
                     }
@@ -108,38 +108,24 @@ private:
             return ERR_OK;
         }
 
-        if (!socket_ || recved_queue_.size() >= 100)
+        if (!socket_ || write_in_process_)
             return ERR_MEM;
 
-        lwip::instance().lwip_tcp_recved(tpcb, p->tot_len);
+        write_in_process_ = true;
 
         auto buffer = toys::wrapper::pbuf_buffer::smart_copy(p);
         pbuf_free(p);
 
-        bool write_in_process = !recved_queue_.empty();
-        recved_queue_.push(buffer);
-        if (write_in_process)
-            return ERR_OK;
+        socket_->async_write_some(buffer.data(),
+                                  [this, self = shared_from_this(), buffer](const boost::system::error_code& ec, std::size_t bytes) {
+                                      write_in_process_ = false;
+                                      if (ec) {
+                                          do_close();
+                                          return;
+                                      }
 
-        boost::asio::co_spawn(
-            get_io_context(),
-            [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
-                boost::system::error_code ec;
-                while (pcb_ && !recved_queue_.empty()) {
-                    const auto& buffer = recved_queue_.front();
-                    auto        bytes  = co_await boost::asio::async_write(*socket_,
-                                                                           buffer.data(),
-                                                                           net_awaitable[ec]);
-                    if (ec) {
-                        do_close();
-                        co_return;
-                    }
-                    update_upload_bytes(bytes);
-                    recved_queue_.pop();
-                }
-            },
-            boost::asio::detached);
-
+                                      lwip::instance().lwip_tcp_recved(pcb_, bytes);
+                                  });
         return ERR_OK;
     }
 
@@ -154,7 +140,6 @@ private:
 
     core_impl_api&                core_;
     core_impl_api::tcp_socket_ptr socket_;
-
-    std::queue<toys::wrapper::pbuf_buffer> recved_queue_;
+    bool                          write_in_process_ = false;
 };
 }  // namespace tun2socks

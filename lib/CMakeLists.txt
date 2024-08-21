@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_subdirectory(lwip)
 
-find_package(Boost REQUIRED COMPONENTS asio multiprecision)
+find_package(Boost REQUIRED COMPONENTS asio)
 find_package(spdlog CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 
@@ -88,7 +88,7 @@ target_include_directories(${MODULE}
 )
 
 target_link_libraries(${MODULE} 
-PRIVATE Boost::asio Boost::multiprecision
+PRIVATE Boost::asio
 PRIVATE spdlog::spdlog fmt::fmt
 PUBLIC lwipcore
 )
