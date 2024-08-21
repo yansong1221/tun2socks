@@ -1,29 +1,62 @@
 #pragma once
-#include "net/endpoint_pair.hpp"
-#include "network_monitor.hpp"
+#include "endpoint_pair.hpp"
 #include "process_info/process_info.hpp"
+#include "use_awaitable.hpp"
 #include <tun2socks/connection.h>
 
 namespace tun2socks {
 
 template <typename InternetProtocol>
-class basic_connection : public connection, public boost::asio::detail::service_base<basic_connection<InternetProtocol>> {
+class basic_connection : public connection,
+                         public boost::asio::detail::service_base<basic_connection<InternetProtocol>>,
+                         public std::enable_shared_from_this<basic_connection<InternetProtocol>> {
 public:
-    basic_connection(boost::asio::io_context&                          ioc,
-                     const net::basic_endpoint_pair<InternetProtocol>& endpoint_pair)
-        : boost::asio::detail::service_base<basic_connection<InternetProtocol>>(ioc),
-          endpoint_pair_(endpoint_pair)
+    using endpoint_pair_type = basic_endpoint_pair<InternetProtocol>;
+    using connection_type    = basic_connection<InternetProtocol>;
+
+public:
+    basic_connection(boost::asio::io_context&  ioc,
+                     const endpoint_pair_type& endpoint_pair)
+        : boost::asio::detail::service_base<connection_type>(ioc),
+          endpoint_pair_(endpoint_pair),
+          update_timer_(ioc)
     {
         pid_ = process_info::get_pid(endpoint_pair.src.port());
         if (pid_)
             execute_path_ = process_info::get_execute_path(*pid_);
-
-        net_monitor_ = std::make_shared<network_monitor>(ioc);
-        net_monitor_->start();
     }
     ~basic_connection()
     {
-        net_monitor_->stop();
+    }
+
+public:
+    void start()
+    {
+        boost::asio::co_spawn(
+            this->get_io_context(),
+            [this, self = this->shared_from_this()]() -> boost::asio::awaitable<void> {
+                boost::system::error_code ec;
+                for (;;) {
+                    update_timer_.expires_after(std::chrono::seconds(1));
+                    co_await update_timer_.async_wait(net_awaitable[ec]);
+                    if (ec)
+                        co_return;
+
+                    speed_download_1s_ = speed_download_.load();
+                    speed_upload_1s_   = speed_upload_.load();
+                    speed_download_    = 0;
+                    speed_upload_      = 0;
+                }
+            },
+            boost::asio::detached);
+
+        this->on_connection_start();
+    }
+    void stop()
+    {
+        boost::system::error_code ec;
+        update_timer_.cancel(ec);
+        this->on_connection_stop();
     }
 
 public:
@@ -46,59 +79,71 @@ public:
     }
     std::string local_endpoint() const override
     {
-        auto result = std::make_shared<std::promise<std::string>>();
-        const_cast<basic_connection*>(this)->get_io_context().dispatch([this, result]() mutable {
-            result->set_value(fmt::format("[{}]:{}",
-                                          endpoint_pair_.src.address().to_string(),
-                                          endpoint_pair_.src.port()));
-        });
-        return result->get_future().get();
+        return fmt::format("[{}]:{}",
+                           endpoint_pair_.src.address().to_string(),
+                           endpoint_pair_.src.port());
     }
     std::string remote_endpoint() const override
     {
-        auto result = std::make_shared<std::promise<std::string>>();
-        const_cast<basic_connection*>(this)->get_io_context().dispatch([this, result]() mutable {
-            result->set_value(fmt::format("[{}]:{}",
-                                          endpoint_pair_.dest.address().to_string(),
-                                          endpoint_pair_.dest.port()));
-        });
-        return result->get_future().get();
+        return fmt::format("[{}]:{}",
+                           endpoint_pair_.dest.address().to_string(),
+                           endpoint_pair_.dest.port());
     }
     uint32_t get_speed_download_1s() const override
     {
-        return net_monitor_->get_speed_download_1s();
+        return speed_download_1s_;
     }
 
     uint32_t get_speed_upload_1s() const override
     {
-        return net_monitor_->get_speed_upload_1s();
+        return speed_upload_1s_;
     }
 
     uint64_t get_total_download_bytes() const override
     {
-        return net_monitor_->get_total_download_bytes();
+        return total_download_bytes_;
     }
 
     uint64_t get_total_upload_bytes() const override
     {
-        return net_monitor_->get_total_upload_bytes();
+        return total_upload_bytes_;
     }
 
-    const net::basic_endpoint_pair<InternetProtocol>& endpoint_pair() const
+    const endpoint_pair_type& endpoint_pair() const
     {
         return endpoint_pair_;
     };
-    tun2socks::network_monitor& net_monitor()
+
+protected:
+    void update_download_bytes(uint32_t bytes)
     {
-        return *net_monitor_;
-    };
+        total_download_bytes_ += bytes;
+        speed_download_ += bytes;
+    }
+    void update_upload_bytes(uint32_t bytes)
+    {
+        total_upload_bytes_ += bytes;
+        speed_upload_ += bytes;
+    }
+    virtual void on_connection_start() = 0;
+    virtual void on_connection_stop()  = 0;
 
 private:
-    std::shared_ptr<network_monitor>           net_monitor_;
-    net::basic_endpoint_pair<InternetProtocol> endpoint_pair_;
+    endpoint_pair_type endpoint_pair_;
 
     std::optional<uint32_t>    pid_;
     std::optional<std::string> execute_path_;
+
+    boost::asio::steady_timer update_timer_;
+
+    std::atomic_uint64_t total_download_bytes_ = 0;
+    std::atomic_uint64_t total_upload_bytes_   = 0;
+
+    std::atomic_uint32_t speed_download_1s_ = 0;
+    std::atomic_uint32_t speed_upload_1s_   = 0;
+
+    std::atomic_uint32_t speed_download_ = 0;
+    std::atomic_uint32_t speed_upload_   = 0;
 };
 
 using tcp_basic_connection = basic_connection<boost::asio::ip::tcp>;

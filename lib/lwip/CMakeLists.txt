@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(LWIP_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+set(LWIP_INCLUDE_DIRS ${LWIP_DIR}/src/include)
+
 include(src/Filelists.cmake)
 
 # Package generation

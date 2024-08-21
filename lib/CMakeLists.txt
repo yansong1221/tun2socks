@@ -4,7 +4,6 @@ set(MODULE libtun2socks)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lwip/src/include/)
 add_subdirectory(lwip)
 
 find_package(Boost REQUIRED COMPONENTS asio multiprecision)
@@ -36,16 +35,8 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/route/route.hpp
 
 ${CMAKE_CURRENT_SOURCE_DIR}/src/process_info/process_info.hpp
 
-${CMAKE_CURRENT_SOURCE_DIR}/src/net/ip.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/net/udp.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/net/tcp.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/net/tcp.hh
-${CMAKE_CURRENT_SOURCE_DIR}/src/net/packet-util.hh
-${CMAKE_CURRENT_SOURCE_DIR}/src/net/checksum.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/net/address_pair.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/net/endpoint_pair.hpp
-
-${CMAKE_CURRENT_SOURCE_DIR}/src/buffer.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/address_pair.hpp
+${CMAKE_CURRENT_SOURCE_DIR}/src/endpoint_pair.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/basic_connection.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/core_impl_api.h
 ${CMAKE_CURRENT_SOURCE_DIR}/src/misc.hpp
@@ -57,7 +48,6 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/core_impl.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/lwip.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/pbuf.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/proxy_policy_impl.hpp
-${CMAKE_CURRENT_SOURCE_DIR}/src/network_monitor.hpp
 ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.hpp
 )
 if(APPLE)

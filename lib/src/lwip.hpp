@@ -15,7 +15,10 @@
 #include <thread>
 #include <time.h>
 
+#include "address_pair.hpp"
+#include "endpoint_pair.hpp"
 #include "use_awaitable.hpp"
+namespace tun2socks {
 
 class lwip {
 public:
@@ -23,6 +26,50 @@ public:
     {
         static lwip _stack;
         return _stack;
+    }
+    inline static address_pair_type create_address_pair(const ip_addr_t& local_ip,
+                                                        const ip_addr_t& remote_ip)
+    {
+        if (local_ip.type == IPADDR_TYPE_V4) {
+            // IP addresses are always in network order.
+            boost::asio::ip::address_v4 dest_ip(
+                boost::asio::detail::socket_ops::network_to_host_long(local_ip.u_addr.ip4.addr));
+            boost::asio::ip::address_v4 src_ip(
+                boost::asio::detail::socket_ops::network_to_host_long(remote_ip.u_addr.ip4.addr));
+
+            return address_pair_type(src_ip, dest_ip);
+        }
+        else {
+            // IP addresses are always in network order.
+            boost::asio::ip::address_v6::bytes_type dest_ip;
+            boost::asio::ip::address_v6::bytes_type src_ip;
+
+            memcpy(dest_ip.data(), local_ip.u_addr.ip6.addr, 16);
+            memcpy(src_ip.data(), remote_ip.u_addr.ip6.addr, 16);
+
+            return address_pair_type(src_ip, dest_ip);
+        }
+    }
+    inline static udp_endpoint_pair create_endpoint(struct udp_pcb* newpcb)
+    {  // Ports are always in host byte order.
+        auto src_port  = newpcb->remote_port;
+        auto dest_port = newpcb->local_port;
+        auto addr_pair = create_address_pair(newpcb->local_ip,
+                                             newpcb->remote_ip);
+
+        return udp_endpoint_pair(addr_pair,
+                                 src_port,
+                                 dest_port);
+    }
+    inline static tcp_endpoint_pair create_endpoint(struct tcp_pcb* newpcb)
+    {  // Ports are always in host byte order.
+        auto src_port  = newpcb->remote_port;
+        auto dest_port = newpcb->local_port;
+        auto addr_pair = create_address_pair(newpcb->local_ip,
+                                             newpcb->remote_ip);
+        return tcp_endpoint_pair(addr_pair,
+                                 src_port,
+                                 dest_port);
     }
 
     inline static tcp_pcb* lwip_tcp_new()
@@ -93,7 +140,6 @@ public:
         return ::tcp_sent(pcb, sent);
     }
 
-
     inline static void lwip_udp_create(std::function<std::remove_pointer_t<udp_crt_fn>> create_fn)
     {
         return udp_create(create_fn);
@@ -120,14 +166,6 @@ public:
         auto any = ip_addr_any;
         lwip_tcp_bind(pcb, &any, 0);
         return lwip_tcp_listen(pcb);
-    }
-
-    inline static udp_pcb* udp_listen_any()
-    {
-        auto pcb = lwip_udp_new();
-        auto any = ip_addr_any;
-        lwip_udp_bind(pcb, &any, 0);
-        return pcb;
     }
 
     inline static err_t lwip_tcp_write(struct tcp_pcb* pcb,
@@ -172,7 +210,7 @@ public:
                     boost::system::error_code ec;
                     boost::asio::steady_timer update_timer(
                         co_await boost::asio::this_coro::executor);
-                    update_timer.expires_from_now(std::chrono::seconds(1));
+                    update_timer.expires_from_now(std::chrono::milliseconds(10));
                     co_await update_timer.async_wait(net_awaitable[ec]);
                     if (ec)
                         co_return;
@@ -205,3 +243,4 @@ private:
 private:
     netif* loopback_;
 };
+}  // namespace tun2socks

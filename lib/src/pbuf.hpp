@@ -10,15 +10,14 @@ namespace wrapper {
     class pbuf_buffer {
     public:
         pbuf_buffer() = default;
-        pbuf_buffer(pbuf* p, bool add_ref = true)
+        pbuf_buffer(pbuf* p)
         {
             data_ = p;
-            if (add_ref)
-                pbuf_ref(data_);
+            pbuf_ref(data_);
         }
         pbuf_buffer(uint16_t   length,
                     pbuf_layer layer = pbuf_layer::PBUF_RAW,
-                    pbuf_type  ty    = pbuf_type::PBUF_POOL)
+                    pbuf_type  ty    = pbuf_type::PBUF_RAM)
         {
             data_ = pbuf_alloc(pbuf_layer::PBUF_RAW, length, ty);
         }
@@ -53,7 +52,10 @@ namespace wrapper {
         {
             return data_ != nullptr;
         }
-
+        std::size_t len() const
+        {
+            return data_->tot_len;
+        }
         static pbuf_buffer smart_copy(pbuf* p)
         {
             if (p->next) {

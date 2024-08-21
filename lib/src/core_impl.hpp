@@ -13,53 +13,6 @@
 
 namespace tun2socks {
 
-namespace detail {
-    inline static net::address_pair_type create_address_pair(const ip_addr_t& local_ip,
-                                                             const ip_addr_t& remote_ip)
-    {
-        if (local_ip.type == IPADDR_TYPE_V4) {
-            // IP addresses are always in network order.
-            boost::asio::ip::address_v4 dest_ip(
-                boost::asio::detail::socket_ops::network_to_host_long(local_ip.u_addr.ip4.addr));
-            boost::asio::ip::address_v4 src_ip(
-                boost::asio::detail::socket_ops::network_to_host_long(remote_ip.u_addr.ip4.addr));
-
-            return net::address_pair_type(src_ip, dest_ip);
-        }
-        else {
-            // IP addresses are always in network order.
-            boost::asio::ip::address_v6::bytes_type dest_ip;
-            boost::asio::ip::address_v6::bytes_type src_ip;
-
-            memcpy(dest_ip.data(), local_ip.u_addr.ip6.addr, 16);
-            memcpy(src_ip.data(), remote_ip.u_addr.ip6.addr, 16);
-
-            return net::address_pair_type(src_ip, dest_ip);
-        }
-    }
-    inline static net::udp_endpoint_pair create_endpoint(struct udp_pcb* newpcb)
-    {  // Ports are always in host byte order.
-        auto src_port  = newpcb->remote_port;
-        auto dest_port = newpcb->local_port;
-        auto addr_pair = detail::create_address_pair(newpcb->local_ip,
-                                                     newpcb->remote_ip);
-
-        return net::udp_endpoint_pair(addr_pair,
-                                      src_port,
-                                      dest_port);
-    }
-    inline static net::tcp_endpoint_pair create_endpoint(struct tcp_pcb* newpcb)
-    {  // Ports are always in host byte order.
-        auto src_port  = newpcb->remote_port;
-        auto dest_port = newpcb->local_port;
-        auto addr_pair = detail::create_address_pair(newpcb->local_ip,
-                                                     newpcb->remote_ip);
-        return net::tcp_endpoint_pair(addr_pair,
-                                      src_port,
-                                      dest_port);
-    }
-}  // namespace detail
-
 class core_impl : public thread, public core_impl_api {
 public:
     explicit core_impl()
@@ -147,7 +100,6 @@ private:
 
         lwip::instance().init(ioc_);
         auto t_pcb = lwip::tcp_listen_any();
-        auto u_pcb = lwip::udp_listen_any();
 
         lwip::lwip_tcp_accept(t_pcb,
                               std::bind(&core_impl::on_tcp_accept,
@@ -175,7 +127,7 @@ private:
     }
     void on_udp_create(struct udp_pcb* newpcb)
     {
-        auto endpoint_pair = detail::create_endpoint(newpcb);
+        auto endpoint_pair = lwip::create_endpoint(newpcb);
         auto proxy         = std::make_shared<udp_proxy>(ioc_,
                                                  endpoint_pair,
                                                  newpcb,
@@ -227,7 +179,7 @@ private:
         if (err != ERR_OK || newpcb == NULL)
             return ERR_VAL;
 
-        auto endpoint_pair = detail::create_endpoint(newpcb);
+        auto endpoint_pair = lwip::create_endpoint(newpcb);
         auto proxy         = std::make_shared<tcp_proxy>(ioc_,
                                                  newpcb,
                                                  endpoint_pair,
@@ -326,6 +278,7 @@ private:
         if (conn_close_func_)
             conn_close_func_(conn);
 
+        (*iter)->stop();
         udps_.erase(iter);
     }
     void close_endpoint_pair(std::shared_ptr<tcp_basic_connection> conn) override
@@ -337,6 +290,7 @@ private:
         if (conn_close_func_)
             conn_close_func_(conn);
 
+        (*iter)->stop();
         tcps_.erase(iter);
     }
 
