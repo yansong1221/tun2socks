@@ -257,3 +257,7 @@ target_include_directories(lwipcore PUBLIC ${LWIP_INCLUDE_DIRS} ${LWIP_MBEDTLS_I
 if(MSVC)
     target_compile_options(lwipcore PRIVATE /wd4103)
 endif()
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(lwipcore PRIVATE -Wpragma-pack)
+endif()

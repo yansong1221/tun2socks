@@ -88,7 +88,7 @@ public:
             process_path_.erase(p);
         });
     }
-    void remove_process(uint32_t pid)
+    void remove_process(uint32_t pid) override
     {
         ioc_.dispatch([this, pid]() {
             process_pid_.erase(pid);

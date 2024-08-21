@@ -17,6 +17,7 @@
 #define LWIP_SOCKET 0
 #define LWIP_IPV6 1
 #define TCP_MSS 8192
+#define LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS
 /*
 	4 bytes alignment.
 */

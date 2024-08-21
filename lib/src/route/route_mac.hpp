@@ -163,6 +163,14 @@ inline std::optional<route_ipv6> get_default_ipv6_route()
 {
     return std::nullopt;
 }
+inline std::optional<adapter_info> get_default_adapter()
+{
+    return std::nullopt;
+}
+inline void init_route(const tun2socks::parameter::tun_device& tun_param)
+{
+
+}
 
 inline bool add_route_ipapi(const route_ipv4& r)
 {
