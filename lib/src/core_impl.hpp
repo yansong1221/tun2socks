@@ -1,6 +1,8 @@
 #pragma once
 #include "core_impl_api.h"
-#include "lwip.hpp"
+#include "net/ip.hpp"
+#include "net/tcp.hpp"
+#include "net/udp.hpp"
 #include "process_info/process_info.hpp"
 #include "proxy_policy_impl.hpp"
 #include "route/route.hpp"
@@ -17,7 +19,9 @@ class core_impl : public thread, public core_impl_api {
 public:
     explicit core_impl()
         : tuntap_(ioc_),
-          proxy_policy_(ioc_)
+          proxy_policy_(ioc_),
+          tcp_(ioc_),
+          udp_(ioc_)
     {
     }
     bool start(const parameter::tun_device&    tun_param,
@@ -98,23 +102,34 @@ private:
 
         route::init_route(tun_param_);
 
+<<<<<<< HEAD
         lwip::instance().init(ioc_);
         auto t_pcb = lwip::tcp_listen_any();
+=======
+        tcp_.set_tcp_output_function(std::bind(&net::ip::output, &ip_, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        tcp_.set_tcp_accept_function([this](net::tcp::tcp_pcb::weak_ptr pcb) {
+            auto ptr = pcb.lock();
+            if (!ptr)
+                return;
+>>>>>>> 4b4e245fe323a42d88c13f18fbec855217dc13b4
 
-        lwip::lwip_tcp_accept(t_pcb,
-                              std::bind(&core_impl::on_tcp_accept,
-                                        this,
-                                        std::placeholders::_1,
-                                        std::placeholders::_2,
-                                        std::placeholders::_3));
-        lwip::lwip_udp_create(
-            std::bind(&core_impl::on_udp_create, this, std::placeholders::_1));
+            auto proxy = std::make_shared<tcp_proxy>(ioc_,
+                                                     ptr,
+                                                     ptr->endp_pair(),
+                                                     *this);
 
-        lwip::instance().lwip_ip_output(std::bind(&core_impl::on_ip_output,
-                                                  this,
-                                                  std::placeholders::_1,
-                                                  std::placeholders::_2));
+            proxy->start();
+            tcps_.insert(proxy);
+            if (conn_open_func_)
+                conn_open_func_(proxy);
+        });
+        udp_.set_output_function(std::bind(&net::ip::output, &ip_, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        udp_.set_udp_open_function([this](net::udp::udp_pcb::weak_ptr pcb) {
+            auto ptr = pcb.lock();
+            if (!ptr)
+                return;
 
+<<<<<<< HEAD
         boost::asio::co_spawn(ioc_, read_tun_ip_packet(), boost::asio::detached);
         return true;
     }
@@ -134,43 +149,61 @@ private:
                                                  *this);
         proxy->start();
         udps_.insert(proxy);
+=======
+            auto proxy = std::make_shared<udp_proxy>(ioc_,
+                                                     ptr->endp_pair(),
+                                                     ptr,
+                                                     *this);
+            proxy->start();
+            udps_.insert(proxy);
+>>>>>>> 4b4e245fe323a42d88c13f18fbec855217dc13b4
 
-        if (conn_open_func_)
-            conn_open_func_(proxy);
-    }
-    err_t on_ip_output(struct netif* netif, struct pbuf* p)
-    {
-        auto buffer           = toys::wrapper::pbuf_buffer::smart_copy(p);
-        bool write_in_process = !send_queue_.empty();
-        send_queue_.push(buffer);
-        if (write_in_process)
-            return ERR_OK;
+            if (conn_open_func_)
+                conn_open_func_(proxy);
+        });
+
+        ip_.register_protocol(net::tcp::protocol,
+                              std::bind(&net::tcp::input, &tcp_, std::placeholders::_1, std::placeholders::_2));
+        ip_.register_protocol(net::udp::protocol,
+                              std::bind(&net::udp::input, &udp_, std::placeholders::_1, std::placeholders::_2));
+
+        ip_.set_ip_packet_output([this](shared_buffer buffer) {
+            bool write_in_process = !send_queue_.empty();
+            send_queue_.push(buffer);
+            if (write_in_process)
+                return;
+
+            boost::asio::co_spawn(
+                ioc_,
+                [this]() -> boost::asio::awaitable<void> {
+                    boost::system::error_code ec;
+                    boost::asio::steady_timer try_again_timer(
+                        co_await boost::asio::this_coro::executor);
+                    while (!send_queue_.empty()) {
+                        const auto& buffer = send_queue_.front();
+                        auto        bytes  = co_await tuntap_.async_write_some(buffer.data(), ec);
+                        if (ec) {
+                            spdlog::warn("Write IP Packet to tuntap Device Failed: {0}", ec.message());
+                            co_return;
+                        }
+                        if (bytes == 0) {
+                            try_again_timer.expires_from_now(std::chrono::milliseconds(64));
+                            co_await try_again_timer.async_wait(net_awaitable[ec]);
+                            if (ec)
+                                break;
+                            continue;
+                        }
+                        send_queue_.pop();
+                    }
+                },
+                boost::asio::detached);
+        });
 
         boost::asio::co_spawn(
-            ioc_,
-            [this]() -> boost::asio::awaitable<void> {
-                boost::system::error_code ec;
-                boost::asio::steady_timer try_again_timer(
-                    co_await boost::asio::this_coro::executor);
-                while (!send_queue_.empty()) {
-                    const auto& buffer = send_queue_.front();
-                    auto        bytes  = co_await tuntap_.async_write_some(buffer.data(), ec);
-                    if (ec) {
-                        spdlog::warn("Write IP Packet to tuntap Device Failed: {0}", ec.message());
-                        co_return;
-                    }
-                    if (bytes == 0) {
-                        try_again_timer.expires_from_now(std::chrono::milliseconds(64));
-                        co_await try_again_timer.async_wait(net_awaitable[ec]);
-                        if (ec)
-                            break;
-                        continue;
-                    }
-                    send_queue_.pop();
-                }
-            },
-            boost::asio::detached);
+            ioc_, [this]() -> boost::asio::awaitable<void> {
+                for (;;) {
 
+<<<<<<< HEAD
         return ERR_OK;
     }
 
@@ -195,18 +228,36 @@ private:
     boost::asio::awaitable<void> read_tun_ip_packet()
     {
         for (;;) {
+=======
+>>>>>>> 4b4e245fe323a42d88c13f18fbec855217dc13b4
             boost::system::error_code  ec;
-            toys::wrapper::pbuf_buffer buffer(65532);
+                    shared_buffer      buffer(65532);
 
             auto bytes = co_await tuntap_.async_read_some(buffer.data(), ec);
             if (ec)
                 co_return;
 
-            buffer.realloc(bytes);
-            pbuf_ref(&buffer);
-            lwip::instance().lwip_ip_input(&buffer);
-        }
-    };
+            buffer.resize(bytes);
+            try {
+                ip_.input(buffer);
+            }
+            catch (const std::exception& e) {
+                spdlog::error(e.what());
+            }
+            
+
+        } }, boost::asio::detached);
+        return true;
+    }
+    virtual bool on_thread_run() override
+    {
+        boost::asio::io_context::work w(ioc_);
+
+        boost::system::error_code ec;
+        ioc_.restart();
+        ioc_.run(ec);
+        return false;
+    }
 
     boost::asio::awaitable<tcp_socket_ptr> create_proxy_socket(
         std::shared_ptr<tcp_basic_connection> conn) override
@@ -387,12 +438,12 @@ private:
     }
 
 private:
-    boost::asio::io_context                ioc_;
-    tuntap::tuntap                         tuntap_;
-    parameter::socks5_server               socks5_proxy_;
-    parameter::tun_device                  tun_param_;
-    std::queue<toys::wrapper::pbuf_buffer> send_queue_;
-    proxy_policy_impl                      proxy_policy_;
+    boost::asio::io_context   ioc_;
+    tuntap::tuntap            tuntap_;
+    parameter::socks5_server  socks5_proxy_;
+    parameter::tun_device     tun_param_;
+    std::queue<shared_buffer> send_queue_;
+    proxy_policy_impl         proxy_policy_;
 
     std::unordered_set<std::shared_ptr<udp_basic_connection>> udps_;
     std::unordered_set<std::shared_ptr<tcp_basic_connection>> tcps_;
@@ -401,5 +452,9 @@ private:
     connection::close_function conn_close_func_;
 
     std::optional<route::adapter_info> default_adapter_;
+
+    net::ip  ip_;
+    net::tcp tcp_;
+    net::udp udp_;
 };
 }  // namespace tun2socks

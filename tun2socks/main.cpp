@@ -39,7 +39,11 @@ int main(int argc, char** argv)
 
    /* tun2socks_.proxy_policy()
         .set_process(R"(C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe)", false);*/
+<<<<<<< HEAD
     // tun2socks_.proxy_policy().set_process(R"(C:\Program Files\Clash Verge\verge-mihomo.exe)", true);
+=======
+    //tun2socks_.proxy_policy().set_process(R"(C:\Program Files\Clash Verge\verge-mihomo.exe)", true);
+>>>>>>> 4b4e245fe323a42d88c13f18fbec855217dc13b4
     tun2socks_.proxy_policy().set_process(10108, true);
     tun2socks_.proxy_policy().set_default_direct(true);
     tun2socks_.tcp_connections();
