@@ -1,13 +1,8 @@
 #pragma once
-<<<<<<< HEAD
 #include "endpoint_pair.hpp"
-=======
-#include "net/endpoint_pair.hpp"
->>>>>>> 4b4e245fe323a42d88c13f18fbec855217dc13b4
 #include "process_info/process_info.hpp"
 #include "use_awaitable.hpp"
 #include <tun2socks/connection.h>
-#include "use_awaitable.hpp"
 
 namespace tun2socks {
 
@@ -16,7 +11,6 @@ class basic_connection : public connection,
                          public boost::asio::detail::service_base<basic_connection<InternetProtocol>>,
                          public std::enable_shared_from_this<basic_connection<InternetProtocol>> {
 public:
-<<<<<<< HEAD
     using endpoint_pair_type = basic_endpoint_pair<InternetProtocol>;
     using connection_type    = basic_connection<InternetProtocol>;
 
@@ -24,11 +18,6 @@ public:
     basic_connection(boost::asio::io_context&  ioc,
                      const endpoint_pair_type& endpoint_pair)
         : boost::asio::detail::service_base<connection_type>(ioc),
-=======
-    basic_connection(boost::asio::io_context&                          ioc,
-                     const net::basic_endpoint_pair<InternetProtocol>& endpoint_pair)
-        : boost::asio::detail::service_base<basic_connection<InternetProtocol>>(ioc),
->>>>>>> 4b4e245fe323a42d88c13f18fbec855217dc13b4
           endpoint_pair_(endpoint_pair),
           update_timer_(ioc)
     {
@@ -44,18 +33,11 @@ public:
     void start()
     {
         boost::asio::co_spawn(
-<<<<<<< HEAD
             this->get_io_context(),
             [this, self = this->shared_from_this()]() -> boost::asio::awaitable<void> {
                 boost::system::error_code ec;
                 for (;;) {
                     update_timer_.expires_after(std::chrono::seconds(1));
-=======
-            this->get_io_context(), [this, self = this->shared_from_this()]() -> boost::asio::awaitable<void> {
-                boost::system::error_code ec;
-                for (;;) {
-                    update_timer_.expires_from_now(std::chrono::seconds(1));
->>>>>>> 4b4e245fe323a42d88c13f18fbec855217dc13b4
                     co_await update_timer_.async_wait(net_awaitable[ec]);
                     if (ec)
                         co_return;
@@ -147,20 +129,12 @@ protected:
     virtual void on_connection_stop()  = 0;
 
 private:
-<<<<<<< HEAD
     endpoint_pair_type endpoint_pair_;
-=======
-    net::basic_endpoint_pair<InternetProtocol> endpoint_pair_;
->>>>>>> 4b4e245fe323a42d88c13f18fbec855217dc13b4
 
     std::optional<uint32_t>    pid_;
     std::optional<std::string> execute_path_;
 
     boost::asio::steady_timer update_timer_;
-<<<<<<< HEAD
-=======
-    bool                      is_running_ = false;
->>>>>>> 4b4e245fe323a42d88c13f18fbec855217dc13b4
 
     std::atomic_uint64_t total_download_bytes_ = 0;
     std::atomic_uint64_t total_upload_bytes_   = 0;

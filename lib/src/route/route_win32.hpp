@@ -262,10 +262,8 @@ inline void init_route(const tun2socks::parameter::tun_device& tun_param)
             details::windows_route_v4 info;
             info.if_index = adapter.ipv4_if_index;
             info.metric   = 1;
-            // info.mask     = boost::asio::ip::address_v4::from_string("255.255.255.255");
-            // info.net      = boost::asio::ip::address_v4::from_string("222.92.89.234");
-            info.mask = boost::asio::ip::address_v4::any();
-            info.net  = boost::asio::ip::address_v4::any();
+            info.mask     = boost::asio::ip::address_v4::any();
+            info.net      = boost::asio::ip::address_v4::any();
             details::add_route_ipapi(info);
         }
         if (tun_param.ipv6) {
@@ -279,5 +277,6 @@ inline void init_route(const tun2socks::parameter::tun_device& tun_param)
         return;
     }
 }
+
 
 }  // namespace route
