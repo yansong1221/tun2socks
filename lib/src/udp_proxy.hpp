@@ -52,16 +52,16 @@ protected:
                 for (; pcb_;) {
                     reset_timeout_timer();
 
-                    toys::wrapper::pbuf_buffer buffer(4096);
+                    wrapper::pbuf_buffer buffer(4096);
 
                     auto bytes = co_await socket_->async_receive_from(buffer.data(),
                                                                       proxy_endpoint_,
                                                                       net_awaitable[ec]);
                     if (ec) {
-                        spdlog::warn("Failed to receive UDP data from the remote end : [{}]:{} {}",
-                                     proxy_endpoint_.address().to_string(),
-                                     proxy_endpoint_.port(),
-                                     ec.message());
+                        //spdlog::warn("Failed to receive UDP data from the remote end : [{}]:{} {}",
+                        //             proxy_endpoint_.address().to_string(),
+                        //             proxy_endpoint_.port(),
+                        //             ec.message());
                         do_close();
                         co_return;
                     }
@@ -112,7 +112,7 @@ private:
         if (!socket_)
             return;
 
-        auto buffer = toys::wrapper::pbuf_buffer::smart_copy(p);
+        auto buffer = wrapper::pbuf_buffer::smart_copy(p);
         pbuf_free(p);
 
         bool write_in_process = !send_queue_.empty();
@@ -132,10 +132,10 @@ private:
                                                                          net_awaitable[ec]);
 
                     if (ec) {
-                        spdlog::warn("Sending UDP data failed: [{}]:{} {}",
-                                     proxy_endpoint_.address().to_string(),
-                                     proxy_endpoint_.port(),
-                                     ec.message());
+                        //spdlog::warn("Sending UDP data failed: [{}]:{} {}",
+                        //             proxy_endpoint_.address().to_string(),
+                        //             proxy_endpoint_.port(),
+                        //             ec.message());
                         do_close();
                         co_return;
                     }
@@ -157,8 +157,8 @@ private:
     core_impl_api::udp_socket_ptr socket_;
     core_impl_api&                core_;
 
-    std::queue<toys::wrapper::pbuf_buffer> send_queue_;
-    boost::asio::ip::udp::endpoint         proxy_endpoint_;
+    std::queue<wrapper::pbuf_buffer> send_queue_;
+    boost::asio::ip::udp::endpoint   proxy_endpoint_;
 
     boost::asio::steady_timer timeout_timer_;
 };

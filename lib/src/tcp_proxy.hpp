@@ -83,7 +83,6 @@ protected:
 
         lwip::lwip_tcp_sent(pcb_, nullptr);
         lwip::lwip_tcp_receive(pcb_, nullptr);
-        lwip::lwip_tcp_close(pcb_);
         tcp_shutdown(pcb_, 1, 1);
         tcp_close(pcb_);
         pcb_ = nullptr;
@@ -113,19 +112,20 @@ private:
 
         write_in_process_ = true;
 
-        auto buffer = toys::wrapper::pbuf_buffer::smart_copy(p);
+        auto buffer = wrapper::pbuf_buffer::smart_copy(p);
         pbuf_free(p);
 
-        socket_->async_write_some(buffer.data(),
-                                  [this, self = shared_from_this(), buffer](const boost::system::error_code& ec, std::size_t bytes) {
-                                      write_in_process_ = false;
-                                      if (ec) {
-                                          do_close();
-                                          return;
-                                      }
+        boost::asio::async_write(*socket_,
+                                 buffer.data(),
+                                 [this, self = shared_from_this(), buffer](const boost::system::error_code& ec, std::size_t bytes) {
+                                     write_in_process_ = false;
+                                     if (ec) {
+                                         do_close();
+                                         return;
+                                     }
 
-                                      lwip::instance().lwip_tcp_recved(pcb_, bytes);
-                                  });
+                                     lwip::instance().lwip_tcp_recved(pcb_, bytes);
+                                 });
         return ERR_OK;
     }
 

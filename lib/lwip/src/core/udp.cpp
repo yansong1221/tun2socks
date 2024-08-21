@@ -323,24 +323,17 @@ udp_input(struct pbuf *p, struct netif *inp)
 
   if (pcb == NULL && udp_create_fn != NULL) {
       pcb = udp_new();
-      if (udp_bind(pcb, ip_current_dest_addr(), dest) == ERR_OK &&
-          udp_connect(pcb, ip_current_src_addr(), src) == ERR_OK) {
-          udp_create_fn(pcb);
-      }         
-      else {
-          udp_remove(pcb);
-          pcb = NULL;
-      }       
-      //pcb->local_port = dest;
-      //memcpy(&pcb->local_ip, ip_current_dest_addr(), sizeof(pcb->local_ip));
-      //// udp_connect
-      //pcb->remote_port = src;
-      //memcpy(&pcb->remote_ip, ip_current_src_addr(), sizeof(pcb->remote_ip));
-      //pcb->flags |= UDP_FLAGS_CONNECTED;
-      //// udp_bind
-      //pcb->next = udp_pcbs;
-      //udp_pcbs = pcb;
-      //// maybe handle ERR_ABRT here?   
+      pcb->local_port = dest;
+      memcpy(&pcb->local_ip, ip_current_dest_addr(), sizeof(pcb->local_ip));
+      // udp_connect
+      pcb->remote_port = src;
+      memcpy(&pcb->remote_ip, ip_current_src_addr(), sizeof(pcb->remote_ip));
+      pcb->flags |= UDP_FLAGS_CONNECTED;
+      // udp_bind
+      pcb->next = udp_pcbs;
+      udp_pcbs = pcb;
+      // maybe handle ERR_ABRT here?
+      udp_create_fn(pcb);
   }
 
   /* Check checksum if this is a match or if it was directed at us. */

@@ -210,7 +210,7 @@ public:
                     boost::system::error_code ec;
                     boost::asio::steady_timer update_timer(
                         co_await boost::asio::this_coro::executor);
-                    update_timer.expires_from_now(std::chrono::milliseconds(10));
+                    update_timer.expires_from_now(std::chrono::seconds(1));
                     co_await update_timer.async_wait(net_awaitable[ec]);
                     if (ec)
                         co_return;

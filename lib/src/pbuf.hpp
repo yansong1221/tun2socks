@@ -4,7 +4,7 @@
 #include "lwip/pbuf.h"
 #include <boost/asio/buffer.hpp>
 #include <cstdint>
-namespace toys {
+namespace tun2socks {
 namespace wrapper {
 
     class pbuf_buffer {

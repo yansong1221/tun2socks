@@ -41,7 +41,7 @@ namespace tuntap {
         boost::asio::awaitable<std::size_t> async_read_some(const MutableBufferSequence& buffer,
                                                             boost::system::error_code&   ec)
         {
-            // co_await boost::asio::post(get_io_context(), boost::asio::use_awaitable);
+            co_await boost::asio::post(get_io_context(), boost::asio::use_awaitable);
 
             for (;;) {
                 auto bytes = wintun_session_->receive_packet(buffer, ec);
@@ -56,7 +56,7 @@ namespace tuntap {
         boost::asio::awaitable<std::size_t> async_write_some(const ConstBufferSequence& buffers,
                                                              boost::system::error_code& ec)
         {
-            // co_await boost::asio::post(get_io_context(), boost::asio::use_awaitable);
+            co_await boost::asio::post(get_io_context(), boost::asio::use_awaitable);
 
             wintun_session_->send_packets(buffers, ec);
             if (ec) {

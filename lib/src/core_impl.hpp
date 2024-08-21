@@ -140,7 +140,7 @@ private:
     }
     err_t on_ip_output(struct netif* netif, struct pbuf* p)
     {
-        auto buffer           = toys::wrapper::pbuf_buffer::smart_copy(p);
+        auto buffer           = wrapper::pbuf_buffer::smart_copy(p);
         bool write_in_process = !send_queue_.empty();
         send_queue_.push(buffer);
         if (write_in_process)
@@ -195,8 +195,8 @@ private:
     boost::asio::awaitable<void> read_tun_ip_packet()
     {
         for (;;) {
-            boost::system::error_code  ec;
-            toys::wrapper::pbuf_buffer buffer(65532);
+            boost::system::error_code ec;
+            wrapper::pbuf_buffer      buffer(65532);
 
             auto bytes = co_await tuntap_.async_read_some(buffer.data(), ec);
             if (ec)
@@ -387,12 +387,12 @@ private:
     }
 
 private:
-    boost::asio::io_context                ioc_;
-    tuntap::tuntap                         tuntap_;
-    parameter::socks5_server               socks5_proxy_;
-    parameter::tun_device                  tun_param_;
-    std::queue<toys::wrapper::pbuf_buffer> send_queue_;
-    proxy_policy_impl                      proxy_policy_;
+    boost::asio::io_context          ioc_;
+    tuntap::tuntap                   tuntap_;
+    parameter::socks5_server         socks5_proxy_;
+    parameter::tun_device            tun_param_;
+    std::queue<wrapper::pbuf_buffer> send_queue_;
+    proxy_policy_impl                proxy_policy_;
 
     std::unordered_set<std::shared_ptr<udp_basic_connection>> udps_;
     std::unordered_set<std::shared_ptr<tcp_basic_connection>> tcps_;

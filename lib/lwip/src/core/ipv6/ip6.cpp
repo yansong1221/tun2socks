@@ -592,6 +592,9 @@ ip6_input(struct pbuf *p, struct netif *inp)
   ip_data.current_netif = inp;
   ip_data.current_input_netif = inp;
 
+  netif = inp;
+  goto netif_found;
+
   /* match packet against an interface, i.e. is this packet for us? */
   if (ip6_addr_ismulticast(ip6_current_dest_addr())) {
     /* Always joined to multicast if-local and link-local all-nodes group. */

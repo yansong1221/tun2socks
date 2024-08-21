@@ -393,6 +393,10 @@ tcp_write_checks(struct tcp_pcb *pcb, u16_t len)
 err_t
 tcp_write(struct tcp_pcb *pcb, const void *arg, u16_t len, u8_t apiflags)
 {
+	if (!sys_arch_pcb_is_watch(pcb)) {
+		return ERR_RST;
+	}
+
 	struct pbuf *concat_p = NULL;
 	struct tcp_seg *last_unsent = NULL, *seg = NULL, *prev_seg = NULL, *queue = NULL;
 	u16_t pos = 0; /* position in 'arg' data */
@@ -1249,6 +1253,10 @@ tcp_build_wnd_scale_option(u32_t *opts)
 err_t
 tcp_output(struct tcp_pcb *pcb)
 {
+	if (!sys_arch_pcb_is_watch(pcb)) {
+		return ERR_RST;
+	}
+
 	struct tcp_seg *seg, *useg;
 	u32_t wnd, snd_nxt;
 	err_t err;
