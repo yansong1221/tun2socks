@@ -22,13 +22,6 @@ public:
           conn_(conn),
           timeout_timer_(ioc)
     {
-        lwip::lwip_udp_recv(pcb_, std::bind(&udp_proxy::on_udp_recved,
-                                            this,
-                                            std::placeholders::_1,
-                                            std::placeholders::_2,
-                                            std::placeholders::_3,
-                                            std::placeholders::_4,
-                                            std::placeholders::_5));
     }
     ~udp_proxy()
     {
@@ -38,17 +31,34 @@ public:
 protected:
     virtual void on_connection_start() override
     {
+        conn_->set_recv_function(
+            [this, self = shared_from_this()](wrapper::pbuf_buffer buffer) {
+                if (!socket_)
+                    return;
+
+                reset_timeout_timer();
+                socket_->async_send_to(
+                    buffer.data(),
+                    proxy_endpoint_,
+                    [this, buffer, self = shared_from_this()](const boost::system::error_code& ec, std::size_t bytes) {
+                        if (ec) {
+                            do_close();
+                            return;
+                        }
+                        update_upload_bytes(bytes);
+                    });
+            });
         boost::asio::co_spawn(
             get_io_context(), [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
-                socket_ = co_await core_.create_proxy_socket(shared_from_this(),
+                socket_ = co_await core_.create_proxy_socket(self,
                                                              proxy_endpoint_);
-                if (!socket_ || !pcb_) {
+                if (!socket_) {
                     do_close();
                     co_return;
                 }
 
                 boost::system::error_code ec;
-                for (; pcb_;) {
+                for (;;) {
                     reset_timeout_timer();
 
                     wrapper::pbuf_buffer buffer(4096);
@@ -56,32 +66,23 @@ protected:
                     auto bytes = co_await socket_->async_receive_from(buffer.data(),
                                                                       proxy_endpoint_,
                                                                       net_awaitable[ec]);
-                    if (ec) {
-                        // spdlog::warn("Failed to receive UDP data from the remote end : [{}]:{} {}",
-                        //              proxy_endpoint_.address().to_string(),
-                        //              proxy_endpoint_.port(),
-                        //              ec.message());
+                    if (ec || !conn_) {
                         do_close();
                         co_return;
                     }
-                    if (!pcb_)
-                        co_return;
+
                     update_download_bytes(bytes);
                     buffer.realloc(bytes);
-                    lwip::lwip_udp_send(pcb_, &buffer);
+                    conn_->send(buffer);
                 }
             },
             boost::asio::detached);
     }
     virtual void on_connection_stop() override
     {
-        if (!pcb_)
+        if (!conn_)
             return;
-
-        lwip::lwip_udp_recv(pcb_, nullptr);
-        lwip::lwip_udp_disconnect(pcb_);
-        lwip::lwip_udp_remove(pcb_);
-        pcb_ = nullptr;
+        conn_.reset();
 
         if (socket_) {
             boost::system::error_code ec;
@@ -94,39 +95,12 @@ private:
     {
         boost::system::error_code ec;
         timeout_timer_.cancel(ec);
-
         timeout_timer_.expires_after(10s);
-
-        timeout_timer_.async_wait([this, self = shared_from_this()](boost::system::error_code ec) {
-            if (ec)
-                return;
-            do_close();
-        });
-    }
-    void on_udp_recved(void* arg, struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* addr, u16_t port)
-    {
-        if (pcb_ == nullptr)
-            return;
-
-        if (!socket_)
-            return;
-
-        auto buffer = wrapper::pbuf_buffer::smart_copy(p);
-        pbuf_free(p);
-
-        reset_timeout_timer();
-        socket_->async_send_to(
-            buffer.data(), proxy_endpoint_,
-            [this, buffer, self = shared_from_this()](const boost::system::error_code& ec, std::size_t bytes) {
-                if (ec) {
-                    // spdlog::warn("Sending UDP data failed: [{}]:{} {}",
-                    //              proxy_endpoint_.address().to_string(),
-                    //              proxy_endpoint_.port(),
-                    //              ec.message());
-                    do_close();
+        timeout_timer_.async_wait(
+            [this, self = shared_from_this()](boost::system::error_code ec) {
+                if (ec)
                     return;
-                }
-                update_upload_bytes(bytes);
+                do_close();
             });
     }
     void do_close()

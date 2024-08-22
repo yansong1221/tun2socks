@@ -100,8 +100,8 @@ private:
 
         lwip::instance().init(ioc_);
 
-        tcp_accept_ = lwip::tcp_accept::instance();
-        tcp_accept_->set_accept_function([this](lwip::tcp_conn::ptr conn) {
+        auto tcp_accept = lwip::tcp_accept::instance();
+        tcp_accept->set_accept_function([this, tcp_accept](lwip::tcp_conn::ptr conn) {
             auto proxy = std::make_shared<tcp_proxy>(
                 ioc_,
                 conn,
@@ -114,9 +114,8 @@ private:
                 conn_open_func_(proxy);
         });
 
-        udp_creator_ = lwip::udp_creator::instance();
-        udp_creator_->set_udp_create_function([this](lwip::udp_conn::ptr conn) {
-
+        auto udp_creator = lwip::udp_creator::instance();
+        udp_creator->set_udp_create_function([this, udp_creator](lwip::udp_conn::ptr conn) {
             auto proxy = std::make_shared<udp_proxy>(ioc_,
                                                      conn,
                                                      *this);
@@ -131,7 +130,22 @@ private:
                                                  this,
                                                  std::placeholders::_1));
 
-        boost::asio::co_spawn(ioc_, read_tun_ip_packet(), boost::asio::detached);
+        boost::asio::co_spawn(
+            ioc_,
+            [this]() -> boost::asio::awaitable<void> {
+                for (;;) {
+                    boost::system::error_code ec;
+                    wrapper::pbuf_buffer      buffer(4096);
+
+                    auto bytes = co_await tuntap_.async_read_some(buffer.data(), ec);
+                    if (ec)
+                        co_return;
+
+                    buffer.realloc(bytes);
+                    lwip::instance().lwip_ip_input(&buffer);
+                }
+            },
+            boost::asio::detached);
         return true;
     }
     virtual bool on_thread_run() override
@@ -174,22 +188,6 @@ private:
             },
             boost::asio::detached);
     }
-
-    boost::asio::awaitable<void> read_tun_ip_packet()
-    {
-        for (;;) {
-            boost::system::error_code ec;
-            wrapper::pbuf_buffer      buffer(65532);
-
-            auto bytes = co_await tuntap_.async_read_some(buffer.data(), ec);
-            if (ec)
-                co_return;
-
-            buffer.realloc(bytes);
-            pbuf_ref(&buffer);
-            lwip::instance().lwip_ip_input(&buffer);
-        }
-    };
 
     boost::asio::awaitable<tcp_socket_ptr> create_proxy_socket(
         std::shared_ptr<tcp_basic_connection> conn) override
@@ -384,8 +382,5 @@ private:
     connection::close_function conn_close_func_;
 
     std::optional<route::adapter_info> default_adapter_;
-
-    std::shared_ptr<lwip::tcp_accept>  tcp_accept_;
-    std::shared_ptr<lwip::udp_creator> udp_creator_;
 };
 }  // namespace tun2socks

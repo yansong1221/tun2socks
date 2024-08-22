@@ -94,10 +94,6 @@ PUBLIC lwipcore
 target_compile_definitions(${MODULE} PRIVATE BOOST_BIND_GLOBAL_PLACEHOLDERS)
 
 if(MSVC)
-	target_compile_definitions(${MODULE} PRIVATE 
-		WINVER=0x0601
-		_WIN32_WINNT=0x0601)
-
 	target_compile_options( ${MODULE} PRIVATE
 		"$<$<CXX_COMPILER_ID:MSVC>:/source-charset:utf-8>"
 		"$<$<CXX_COMPILER_ID:MSVC>:/execution-charset:utf-8>"

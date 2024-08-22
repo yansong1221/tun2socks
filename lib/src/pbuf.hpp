@@ -44,11 +44,11 @@ namespace wrapper {
         }
 
     public:
-        pbuf* operator&()
+        pbuf* operator&() const
         {
             return data_;
         }
-        operator bool()
+        operator bool() const
         {
             return data_ != nullptr;
         }

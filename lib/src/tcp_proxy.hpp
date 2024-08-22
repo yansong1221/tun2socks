@@ -25,12 +25,6 @@ public:
           conn_(conn),
           core_(core)
     {
-        lwip::lwip_tcp_receive(pcb_, std::bind(&tcp_proxy::on_recved,
-                                               this,
-                                               std::placeholders::_1,
-                                               std::placeholders::_2,
-                                               std::placeholders::_3,
-                                               std::placeholders::_4));
     }
     ~tcp_proxy()
     {
@@ -40,11 +34,38 @@ public:
 protected:
     virtual void on_connection_start() override
     {
+        conn_->set_recv_function(
+            [this, self = shared_from_this()](wrapper::pbuf_buffer buffer, err_t err) -> err_t {
+                if (err != ERR_OK || !buffer) {
+                    do_close();
+                    return ERR_OK;
+                }
+
+                if (!socket_ || write_in_process_)
+                    return ERR_MEM;
+
+                write_in_process_ = true;
+
+                boost::asio::async_write(
+                    *socket_,
+                    buffer.data(),
+                    [this, self, buffer](const boost::system::error_code& ec, std::size_t bytes) {
+                        write_in_process_ = false;
+                        if (ec) {
+                            do_close();
+                            return;
+                        }
+
+                        conn_->recved(bytes);
+                    });
+                return ERR_OK;
+            });
+
         boost::asio::co_spawn(
             get_io_context(),
             [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
                 socket_ = co_await core_.create_proxy_socket(shared_from_this());
-                if (!socket_ || !pcb_) {
+                if (!socket_) {
                     do_close();
                     co_return;
                 }
@@ -53,19 +74,15 @@ protected:
 
                 uint8_t buffer[TCP_MSS];
                 for (;;) {
-                    lwip::instance().lwip_tcp_output(pcb_);
-
-                    auto sz    = std::min<uint16_t>(TCP_MSS, tcp_sndbuf(pcb_));
+                    auto sz    = std::min<uint16_t>(TCP_MSS, conn_->buf_len());
                     auto bytes = co_await socket_->async_read_some(boost::asio::mutable_buffer(buffer, sz),
                                                                    net_awaitable[ec]);
                     if (ec) {
                         do_close();
                         co_return;
                     }
-                    if (!pcb_)
-                        co_return;
 
-                    err_t err = lwip::lwip_tcp_write(pcb_, buffer, bytes, TCP_WRITE_FLAG_COPY);
+                    err_t err = conn_->write(buffer, bytes);
                     if (err != ERR_OK) {
                         do_close();
                         co_return;
@@ -77,55 +94,14 @@ protected:
     }
     virtual void on_connection_stop() override
     {
-        if (!pcb_)
+        if (!conn_)
             return;
-
-        lwip::lwip_tcp_sent(pcb_, nullptr);
-        lwip::lwip_tcp_receive(pcb_, nullptr);
-        tcp_shutdown(pcb_, 1, 1);
-        tcp_close(pcb_);
-        pcb_ = nullptr;
+        conn_.reset();
 
         if (socket_) {
             boost::system::error_code ec;
             socket_->close(ec);
         }
-    }
-
-private:
-    err_t on_recved(void*           arg,
-                    struct tcp_pcb* tpcb,
-                    struct pbuf*    p,
-                    err_t           err)
-    {
-        if (tpcb == NULL)
-            return ERR_VAL;
-
-        if (err != ERR_OK || !p || 0 == p->len) {
-            do_close();
-            return ERR_OK;
-        }
-
-        if (!socket_ || write_in_process_)
-            return ERR_MEM;
-
-        write_in_process_ = true;
-
-        auto buffer = wrapper::pbuf_buffer::smart_copy(p);
-        pbuf_free(p);
-
-        boost::asio::async_write(*socket_,
-                                 buffer.data(),
-                                 [this, self = shared_from_this(), buffer](const boost::system::error_code& ec, std::size_t bytes) {
-                                     write_in_process_ = false;
-                                     if (ec) {
-                                         do_close();
-                                         return;
-                                     }
-
-                                     lwip::instance().lwip_tcp_recved(pcb_, bytes);
-                                 });
-        return ERR_OK;
     }
 
 private:

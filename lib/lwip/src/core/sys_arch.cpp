@@ -3,6 +3,7 @@
 #include <unordered_set>
 
 #include "lwip/sys.h"
+#include "arch/sys_arch.h"
 #include <chrono>
 
 static std::unordered_set<void*>             sys_arch_pcb_sets;
