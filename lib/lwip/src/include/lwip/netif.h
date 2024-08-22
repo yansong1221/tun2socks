@@ -49,12 +49,6 @@
 #include "lwip/pbuf.h"
 #include "lwip/stats.h"
 
- /*
-	 6. tun2socks: Hey! We are using C++, why not have something better?
- */
-
-#include<functional>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -297,7 +291,7 @@ struct netif {
    *  to send a packet on the interface. This function typically
    *  first resolves the hardware address, then sends the packet.
    *  For ethernet physical layer, this is usually etharp_output() */
-  std::function<std::remove_pointer<netif_output_fn>::type> output;
+  netif_output_fn output;
 #endif /* LWIP_IPV4 */
   /** This function is called by ethernet_output() when it wants
    *  to send a packet on the interface. This function outputs
@@ -308,7 +302,7 @@ struct netif {
    *  to send a packet on the interface. This function typically
    *  first resolves the hardware address, then sends the packet.
    *  For ethernet physical layer, this is usually ethip6_output() */
-  std::function<std::remove_pointer<netif_output_ip6_fn>::type> output_ip6;
+  netif_output_ip6_fn output_ip6;
 #endif /* LWIP_IPV6 */
 #if LWIP_NETIF_STATUS_CALLBACK
   /** This function is called when the netif state is set to up or down

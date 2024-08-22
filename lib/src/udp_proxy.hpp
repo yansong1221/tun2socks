@@ -106,7 +106,7 @@ private:
     }
     void on_udp_recved(void* arg, struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* addr, u16_t port)
     {
-        if (pcb == nullptr)
+        if (pcb_ == nullptr)
             return;
 
         if (!socket_)
@@ -115,36 +115,20 @@ private:
         auto buffer = wrapper::pbuf_buffer::smart_copy(p);
         pbuf_free(p);
 
-        bool write_in_process = !send_queue_.empty();
-        send_queue_.push(buffer);
-        if (write_in_process)
-            return;
-
-        boost::asio::co_spawn(
-            get_io_context(), [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
-                boost::system::error_code ec;
-                while (pcb_ && !send_queue_.empty()) {
-                    reset_timeout_timer();
-
-                    const auto& buffer = send_queue_.front();
-                    auto        bytes  = co_await socket_->async_send_to(buffer.data(),
-                                                                         proxy_endpoint_,
-                                                                         net_awaitable[ec]);
-
-                    if (ec) {
-                        //spdlog::warn("Sending UDP data failed: [{}]:{} {}",
-                        //             proxy_endpoint_.address().to_string(),
-                        //             proxy_endpoint_.port(),
-                        //             ec.message());
-                        do_close();
-                        co_return;
-                    }
-
-                    update_upload_bytes(bytes);
-                    send_queue_.pop();
+        reset_timeout_timer();
+        socket_->async_send_to(
+            buffer.data(), proxy_endpoint_,
+            [this, buffer, self = shared_from_this()](const boost::system::error_code& ec, std::size_t bytes) {
+                if (ec) {
+                    //spdlog::warn("Sending UDP data failed: [{}]:{} {}",
+                    //             proxy_endpoint_.address().to_string(),
+                    //             proxy_endpoint_.port(),
+                    //             ec.message());
+                    do_close();
+                    return;
                 }
-            },
-            boost::asio::detached);
+                update_upload_bytes(bytes);
+            });
     }
     void do_close()
     {
@@ -157,8 +141,7 @@ private:
     core_impl_api::udp_socket_ptr socket_;
     core_impl_api&                core_;
 
-    std::queue<wrapper::pbuf_buffer> send_queue_;
-    boost::asio::ip::udp::endpoint   proxy_endpoint_;
+    boost::asio::ip::udp::endpoint proxy_endpoint_;
 
     boost::asio::steady_timer timeout_timer_;
 };

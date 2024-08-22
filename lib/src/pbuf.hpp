@@ -58,6 +58,9 @@ namespace wrapper {
         }
         static pbuf_buffer smart_copy(pbuf* p)
         {
+            if (!p)
+                return pbuf_buffer();
+
             if (p->next) {
                 pbuf_buffer buffer(p->tot_len);
                 pbuf_copy(&buffer, p);
@@ -85,6 +88,6 @@ namespace wrapper {
     };
 
 }  // namespace wrapper
-}  // namespace toys
+}  // namespace tun2socks
 
 #endif  // TUN2SOCKS_PBUF_HPP

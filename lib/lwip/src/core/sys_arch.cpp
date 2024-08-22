@@ -5,7 +5,6 @@
 #include "lwip/sys.h"
 #include <chrono>
 
-static std::mutex                            sys_arch_pcb_sets_syncobj;
 static std::unordered_set<void*>             sys_arch_pcb_sets;
 static std::chrono::steady_clock::time_point startupTime;
 
@@ -38,12 +37,7 @@ int sys_arch_pcb_watch(void* pcb)
     }
 
     int rc = 0;
-    sys_arch_pcb_sets_syncobj.lock();
-    {
-        rc = sys_arch_pcb_sets.insert(pcb).second ? 1 : 0;
-    }
-    sys_arch_pcb_sets_syncobj.unlock();
-
+    rc     = sys_arch_pcb_sets.insert(pcb).second ? 1 : 0;
     return rc;
 }
 
@@ -54,12 +48,7 @@ int sys_arch_pcb_is_watch(void* pcb)
     }
 
     int rc = 0;
-    sys_arch_pcb_sets_syncobj.lock();
-    {
-        rc = sys_arch_pcb_sets.find(pcb) != sys_arch_pcb_sets.end() ? 1 : 0;
-    }
-    sys_arch_pcb_sets_syncobj.unlock();
-
+    rc     = sys_arch_pcb_sets.find(pcb) != sys_arch_pcb_sets.end() ? 1 : 0;
     return rc;
 }
 
@@ -70,15 +59,11 @@ int sys_arch_pcb_unwatch(void* pcb)
     }
 
     int rc = 0;
-    sys_arch_pcb_sets_syncobj.lock();
-    {
-        auto tail = sys_arch_pcb_sets.find(pcb);
-        if (tail != sys_arch_pcb_sets.end()) {
-            rc = 1;
-            sys_arch_pcb_sets.erase(tail);
-        }
-    }
-    sys_arch_pcb_sets_syncobj.unlock();
 
+    auto tail = sys_arch_pcb_sets.find(pcb);
+    if (tail != sys_arch_pcb_sets.end()) {
+        rc = 1;
+        sys_arch_pcb_sets.erase(tail);
+    }
     return rc;
 }

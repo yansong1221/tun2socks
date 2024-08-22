@@ -1290,7 +1290,7 @@
  * an upper limit on the MSS advertised by the remote host.
  */
 #if !defined TCP_MSS || defined __DOXYGEN__
-#define TCP_MSS (8192)
+#define TCP_MSS (536)
 #endif
 
 /**

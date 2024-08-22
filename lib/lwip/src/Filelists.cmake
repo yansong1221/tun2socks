@@ -32,48 +32,48 @@ endif ("${LWIP_VERSION_RC}" STREQUAL "LWIP_RC_RELEASE")
 
 # The minimum set of files needed for lwIP.
 set(lwipcore_SRCS
-    ${LWIP_DIR}/src/core/init.cpp
+    ${LWIP_DIR}/src/core/init.c
     ${LWIP_DIR}/src/core/def.c
-    ${LWIP_DIR}/src/core/dns.cpp
+    ${LWIP_DIR}/src/core/dns.c
     ${LWIP_DIR}/src/core/inet_chksum.c
-    ${LWIP_DIR}/src/core/ip.cpp
+    ${LWIP_DIR}/src/core/ip.c
     ${LWIP_DIR}/src/core/mem.c
-    ${LWIP_DIR}/src/core/memp.cpp
-    ${LWIP_DIR}/src/core/netif.cpp
-    ${LWIP_DIR}/src/core/pbuf.cpp
+    ${LWIP_DIR}/src/core/memp.c
+    ${LWIP_DIR}/src/core/netif.c
+    ${LWIP_DIR}/src/core/pbuf.c
     ${LWIP_DIR}/src/core/raw.c
     ${LWIP_DIR}/src/core/stats.c
     ${LWIP_DIR}/src/core/sys.c
     ${LWIP_DIR}/src/core/altcp.c
     ${LWIP_DIR}/src/core/altcp_alloc.c
     ${LWIP_DIR}/src/core/altcp_tcp.c
-    ${LWIP_DIR}/src/core/tcp.cpp
-    ${LWIP_DIR}/src/core/tcp_in.cpp
-    ${LWIP_DIR}/src/core/tcp_out.cpp
-    ${LWIP_DIR}/src/core/timeouts.cpp
-    ${LWIP_DIR}/src/core/udp.cpp
+    ${LWIP_DIR}/src/core/tcp.c
+    ${LWIP_DIR}/src/core/tcp_in.c
+    ${LWIP_DIR}/src/core/tcp_out.c
+    ${LWIP_DIR}/src/core/timeouts.c
+    ${LWIP_DIR}/src/core/udp.c
     ${LWIP_DIR}/src/core/sys_arch.cpp
 )
 set(lwipcore4_SRCS
     ${LWIP_DIR}/src/core/ipv4/autoip.c
     ${LWIP_DIR}/src/core/ipv4/dhcp.c
     ${LWIP_DIR}/src/core/ipv4/etharp.c
-    ${LWIP_DIR}/src/core/ipv4/icmp.cpp
+    ${LWIP_DIR}/src/core/ipv4/icmp.c
     ${LWIP_DIR}/src/core/ipv4/igmp.c
-    ${LWIP_DIR}/src/core/ipv4/ip4_frag.cpp
-    ${LWIP_DIR}/src/core/ipv4/ip4.cpp
-    ${LWIP_DIR}/src/core/ipv4/ip4_addr.cpp
+    ${LWIP_DIR}/src/core/ipv4/ip4_frag.c
+    ${LWIP_DIR}/src/core/ipv4/ip4.c
+    ${LWIP_DIR}/src/core/ipv4/ip4_addr.c
 )
 set(lwipcore6_SRCS
     ${LWIP_DIR}/src/core/ipv6/dhcp6.c
     ${LWIP_DIR}/src/core/ipv6/ethip6.c
-    ${LWIP_DIR}/src/core/ipv6/icmp6.cpp
+    ${LWIP_DIR}/src/core/ipv6/icmp6.c
     ${LWIP_DIR}/src/core/ipv6/inet6.c
-    ${LWIP_DIR}/src/core/ipv6/ip6.cpp
-    ${LWIP_DIR}/src/core/ipv6/ip6_addr.cpp
-    ${LWIP_DIR}/src/core/ipv6/ip6_frag.cpp
-    ${LWIP_DIR}/src/core/ipv6/mld6.cpp
-    ${LWIP_DIR}/src/core/ipv6/nd6.cpp
+    ${LWIP_DIR}/src/core/ipv6/ip6.c
+    ${LWIP_DIR}/src/core/ipv6/ip6_addr.c
+    ${LWIP_DIR}/src/core/ipv6/ip6_frag.c
+    ${LWIP_DIR}/src/core/ipv6/mld6.c
+    ${LWIP_DIR}/src/core/ipv6/nd6.c
 )
 
 # APIFILES: The files which implement the sequential and socket APIs.
@@ -92,17 +92,17 @@ set(lwipapi_SRCS
 # Files implementing various generic network interface functions
 set(lwipnetif_SRCS
     ${LWIP_DIR}/src/netif/ethernet.c
-    ${LWIP_DIR}/src/netif/bridgeif.cpp
-    ${LWIP_DIR}/src/netif/bridgeif_fdb.cpp
-    ${LWIP_DIR}/src/netif/slipif.cpp
+    ${LWIP_DIR}/src/netif/bridgeif.c
+    ${LWIP_DIR}/src/netif/bridgeif_fdb.c
+    ${LWIP_DIR}/src/netif/slipif.c
 )
 
 # 6LoWPAN
 set(lwipsixlowpan_SRCS
-    ${LWIP_DIR}/src/netif/lowpan6_common.cpp
-    ${LWIP_DIR}/src/netif/lowpan6.cpp
-    ${LWIP_DIR}/src/netif/lowpan6_ble.cpp
-    ${LWIP_DIR}/src/netif/zepif.cpp
+    ${LWIP_DIR}/src/netif/lowpan6_common.c
+    ${LWIP_DIR}/src/netif/lowpan6.c
+    ${LWIP_DIR}/src/netif/lowpan6_ble.c
+    ${LWIP_DIR}/src/netif/zepif.c
 )
 
 # PPP
@@ -261,3 +261,5 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(lwipcore PRIVATE -Wpragma-pack)
 endif()
+
+set_target_properties(lwipcore PROPERTIES LINKER_LANGUAGE C)

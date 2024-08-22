@@ -16,6 +16,8 @@
 #define LWIP_NETCONN 0
 #define LWIP_SOCKET 0
 #define LWIP_IPV6 1
+#define TCP_MSS 8192
+#define LWIP_ALTCP 1
 /*
 	4 bytes alignment.
 */

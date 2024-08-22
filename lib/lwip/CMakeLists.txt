@@ -1,15 +1,10 @@
 cmake_minimum_required(VERSION 3.7)
 
-project(lwIP LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+project(lwIP LANGUAGES C CXX)
 
 set(LWIP_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(LWIP_INCLUDE_DIRS ${LWIP_DIR}/src/include)
 
-include(src/Filelists.cmake)
 
 # Package generation
 set(CPACK_SOURCE_GENERATOR "ZIP")
@@ -20,3 +15,5 @@ set(CPACK_PACKAGE_VERSION_PATCH "${LWIP_VERSION_REVISION}")
 set(CPACK_SOURCE_IGNORE_FILES "/build/;${CPACK_SOURCE_IGNORE_FILES};.git")
 set(CPACK_SOURCE_PACKAGE_FILE_NAME "lwip-${LWIP_VERSION_MAJOR}.${LWIP_VERSION_MINOR}.${LWIP_VERSION_REVISION}")
 include(CPack)
+
+include(src/Filelists.cmake)

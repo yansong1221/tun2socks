@@ -110,10 +110,9 @@ private:
         lwip::lwip_udp_create(
             std::bind(&core_impl::on_udp_create, this, std::placeholders::_1));
 
-        lwip::instance().lwip_ip_output(std::bind(&core_impl::on_ip_output,
-                                                  this,
-                                                  std::placeholders::_1,
-                                                  std::placeholders::_2));
+        lwip::instance().set_ip_output(std::bind(&core_impl::on_ip_output,
+                                                 this,
+                                                 std::placeholders::_1));
 
         boost::asio::co_spawn(ioc_, read_tun_ip_packet(), boost::asio::detached);
         return true;
@@ -138,13 +137,12 @@ private:
         if (conn_open_func_)
             conn_open_func_(proxy);
     }
-    err_t on_ip_output(struct netif* netif, struct pbuf* p)
+    void on_ip_output(const wrapper::pbuf_buffer& p)
     {
-        auto buffer           = wrapper::pbuf_buffer::smart_copy(p);
         bool write_in_process = !send_queue_.empty();
-        send_queue_.push(buffer);
+        send_queue_.push(p);
         if (write_in_process)
-            return ERR_OK;
+            return;
 
         boost::asio::co_spawn(
             ioc_,
@@ -170,8 +168,6 @@ private:
                 }
             },
             boost::asio::detached);
-
-        return ERR_OK;
     }
 
     err_t on_tcp_accept(void* arg, struct tcp_pcb* newpcb, err_t err)

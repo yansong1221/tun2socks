@@ -51,12 +51,6 @@
 #include "lwip/ip6.h"
 #include "lwip/ip6_addr.h"
 
-/*
-	6. tun2socks: Hey! We are using C++, why not have something better?
-*/
-
-#include<functional>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -234,10 +228,7 @@ struct tcp_pcb_listen {
 
 #if LWIP_CALLBACK_API
   /* Function to call when a listener has been connected. */
-  /*
-	7. tun2socks: Cool! Now we have std::function as callbacks.
-  */
-  std::function<std::remove_pointer<tcp_accept_fn>::type> accept;
+  tcp_accept_fn accept;
 #endif /* LWIP_CALLBACK_API */
 
 #if TCP_LISTEN_BACKLOG
@@ -358,18 +349,15 @@ struct tcp_pcb {
 
 #if LWIP_CALLBACK_API
   /* Function to be called when more send buffer space is available. */
-  std::function<std::remove_pointer<tcp_sent_fn>::type> sent;
+  tcp_sent_fn sent;
   /* Function to be called when (in-sequence) data has arrived. */
-  /*
-	7. tun2socks: Cool! Now we have std::function as callbacks.
-  */
-  std::function<std::remove_pointer<tcp_recv_fn>::type> recv;
+  tcp_recv_fn recv;
   /* Function to be called when a connection has been set up. */
   tcp_connected_fn connected;
   /* Function which is called periodically. */
   tcp_poll_fn poll;
   /* Function to be called whenever a fatal error occurs. */
-  std::function<std::remove_pointer<tcp_err_fn>::type> errf;
+  tcp_err_fn errf;
 #endif /* LWIP_CALLBACK_API */
 
 #if LWIP_TCP_TIMESTAMPS
@@ -426,10 +414,10 @@ struct tcp_pcb * tcp_new_ip_type	(u8_t type);
 void			 tcp_kill_wait		(void);
 void             tcp_arg			(struct tcp_pcb *pcb, void *arg);
 #if LWIP_CALLBACK_API
-void             tcp_recv			(struct tcp_pcb *pcb, std::function<std::remove_pointer<tcp_recv_fn>::type> recv);
-void tcp_sent(struct tcp_pcb *pcb, std::function<std::remove_pointer<tcp_sent_fn>::type> sent);
-void tcp_err(struct tcp_pcb *pcb, std::function<std::remove_pointer<tcp_err_fn>::type> err);
-void tcp_accept(struct tcp_pcb *pcb, std::function<std::remove_pointer<tcp_accept_fn>::type> accept);
+void             tcp_recv			(struct tcp_pcb *pcb, tcp_recv_fn recv);
+void tcp_sent(struct tcp_pcb *pcb, tcp_sent_fn sent);
+void tcp_err(struct tcp_pcb *pcb, tcp_err_fn err);
+void tcp_accept(struct tcp_pcb *pcb, tcp_accept_fn accept);
 #endif /* LWIP_CALLBACK_API */
 void             tcp_poll			(struct tcp_pcb *pcb, tcp_poll_fn poll, u8_t interval);
 
