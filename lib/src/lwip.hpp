@@ -65,16 +65,6 @@ public:
                                  src_port,
                                  dest_port);
     }
-    inline static tcp_endpoint_pair create_endpoint(struct tcp_pcb* newpcb)
-    {  // Ports are always in host byte order.
-        auto src_port  = newpcb->remote_port;
-        auto dest_port = newpcb->local_port;
-        auto addr_pair = create_address_pair(newpcb->local_ip,
-                                             newpcb->remote_ip);
-        return tcp_endpoint_pair(addr_pair,
-                                 src_port,
-                                 dest_port);
-    }
 
     using ip_packet_output_function = std::function<void(wrapper::pbuf_buffer)>;
 
@@ -82,7 +72,7 @@ public:
     public:
         using ptr = std::shared_ptr<tcp_conn>;
 
-        using recv_function = std::function<bool(const wrapper::pbuf_buffer&)>;
+        using recv_function = std::function<err_t(const wrapper::pbuf_buffer&, err_t)>;
 
     public:
         tcp_conn(struct altcp_pcb* pcb)
@@ -119,6 +109,30 @@ public:
         {
             altcp_recved(pcb_, len);
         }
+        inline err_t write(const void* dataptr, uint16_t len)
+        {
+            auto err = altcp_write(pcb_, dataptr, len, TCP_WRITE_FLAG_COPY);
+            if (err != ERR_OK)
+                return err;
+
+            return altcp_output(pcb_);
+        }
+        inline tcp_endpoint_pair endp_pair() const
+        {
+            ip_addr_t local_ip;
+            ip_addr_t remote_ip;
+            uint16_t  local_port;
+            uint16_t  remote_port;
+
+            altcp_get_tcp_addrinfo(pcb_, 1, &local_ip, &local_port);
+            altcp_get_tcp_addrinfo(pcb_, 0, &remote_ip, &remote_port);
+
+            auto addr_pair = create_address_pair(local_ip,
+                                                 remote_ip);
+            return tcp_endpoint_pair(addr_pair,
+                                     local_port,
+                                     remote_port);
+        }
 
     private:
         err_t on_recv(struct pbuf* p, err_t err)
@@ -130,12 +144,13 @@ public:
             if (!recv_func_)
                 return ERR_MEM;
 
-           // if (!recv_func_(buffer))
+            return recv_func_(buffer, err);
         }
         err_t on_sent(u16_t len)
         {
             return ERR_OK;
         }
+
     private:
         struct altcp_pcb* pcb_;
         recv_function     recv_func_;
@@ -145,7 +160,7 @@ public:
     public:
         using accept_function = std::function<void(tcp_conn::ptr)>;
 
-    private:
+    public:
         tcp_accept(struct altcp_pcb* pcb)
             : pcb_(pcb)
         {
@@ -169,16 +184,25 @@ public:
         }
 
     public:
-        inline static std::shared_ptr<tcp_accept> tcp_listen_any()
+        static std::shared_ptr<tcp_accept> instance()
         {
-            auto pcb     = lwip_tcp_new();
+            static std::weak_ptr<tcp_accept> _instance;
+
+            auto obj = _instance.lock();
+            if (obj)
+                return obj;
+
+            auto pcb     = ::tcp_new();
             auto alt_pcb = altcp_tcp_wrap(pcb);
 
             auto any = ip_addr_any;
             altcp_bind(alt_pcb, &any, 0);
             altcp_listen(alt_pcb);
 
-            return std::make_shared<tcp_accept>(alt_pcb);
+            obj = std::make_shared<tcp_accept>(alt_pcb);
+
+            _instance = obj;
+            return obj;
         }
 
     private:
@@ -195,135 +219,111 @@ public:
         struct altcp_pcb* pcb_;
         accept_function   accept_func_;
     };
-
-    inline static tcp_pcb* lwip_tcp_new()
-    {
-        return ::tcp_new();
-    }
-
-    inline static udp_pcb* lwip_udp_new()
-    {
-        return ::udp_new();
-    }
-
-    inline static err_t lwip_tcp_bind(
-        struct tcp_pcb*  pcb,
-        const ip_addr_t* ipaddr,
-        u16_t            port)
-    {
-        return ::tcp_bind(pcb, ipaddr, port);
-    }
-
-    inline static err_t lwip_udp_bind(struct udp_pcb* pcb, const ip_addr_t* ipaddr, u16_t port)
-    {
-        return ::udp_bind(pcb, ipaddr, port);
-    }
-
-    inline static tcp_pcb* lwip_tcp_listen(tcp_pcb* pcb)
-    {
-        return ::tcp_listen(pcb);
-    }
-
-    inline static err_t lwip_udp_connect(struct udp_pcb* pcb, const ip_addr_t* ipaddr, u16_t port)
-    {
-        return udp_connect(pcb, ipaddr, port);
-    }
-
-    inline static void lwip_tcp_arg(tcp_pcb* pcb, void* arg)
-    {
-        return tcp_arg(pcb, arg);
-    }
-
-    inline static void lwip_tcp_receive(
-        struct tcp_pcb*                                       pcb,
-        std::function<std::remove_pointer<tcp_recv_fn>::type> receive)
-    {
-        if (receive == NULL) {
-            tcp_err(pcb, NULL);
+    class udp_conn : public std::enable_shared_from_this<udp_conn> {
+    public:
+        using recv_function = std::function<void(const wrapper::pbuf_buffer&)>;
+        using ptr = std::shared_ptr<udp_conn>;
+    public:
+        explicit udp_conn(struct udp_pcb* pcb)
+            : pcb_(pcb)
+        {
+            ::udp_recv(
+                pcb_,
+                [](void* arg, struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* addr, u16_t port) {
+                    LWIP_UNUSED_ARG(pcb);
+                    auto self = (udp_conn*)arg;
+                    self->on_recv(p, addr, port);
+                },
+                this);
         }
-        else {
-            tcp_err(pcb, [pcb, receive](void* arg, err_t err) { receive(arg, pcb, NULL, err); });
+        ~udp_conn()
+        {
+            udp_recv(pcb_, NULL, NULL);
+            udp_disconnect(pcb_);
+            udp_remove(pcb_);
         }
-        return tcp_recv(pcb, receive);
-    }
 
-    inline static void lwip_tcp_accept(
-        struct tcp_pcb*                                         pcb,
-        std::function<std::remove_pointer<tcp_accept_fn>::type> accept)
-    {
-        return tcp_accept(pcb, accept);
-    }
+    public:
+        err_t send(wrapper::pbuf_buffer buf)
+        {
+            return udp_send(pcb_, &buf);
+        }
+        inline udp_endpoint_pair endp_pair() const
+        {
+            return lwip::create_endpoint(pcb_);
+        }
 
-    inline static void lwip_tcp_recved(struct tcp_pcb* pcb, u16_t len)
-    {
-        return tcp_recved(pcb, len);
-    }
-    inline static void lwip_tcp_sent(struct tcp_pcb*                                       pcb,
-                                     std::function<std::remove_pointer<tcp_sent_fn>::type> sent)
-    {
-        return ::tcp_sent(pcb, sent);
-    }
+    private:
+        void on_recv(struct pbuf* p, const ip_addr_t* addr, u16_t port)
+        {
+            LWIP_UNUSED_ARG(addr);
+            LWIP_UNUSED_ARG(port);
+            auto buffer = wrapper::pbuf_buffer::smart_copy(p);
+            pbuf_free(p);
 
-    inline static void lwip_udp_create(std::function<std::remove_pointer_t<udp_crt_fn>> create_fn)
-    {
-        return udp_create(create_fn);
-    }
+            if (!recv_func_)
+                return;
 
-    inline static void lwip_udp_recv(struct udp_pcb*                                       pcb,
-                                     std::function<std::remove_pointer<udp_recv_fn>::type> recv)
-    {
-        return udp_recv(pcb, recv, NULL);
-    }
-    inline static void lwip_udp_disconnect(struct udp_pcb* pcb)
-    {
-        ::udp_disconnect(pcb);
-    }
+            recv_func_(buffer);
+        }
 
-    inline static void lwip_udp_remove(struct udp_pcb* pcb)
-    {
-        return udp_remove(pcb);
-    }
+    private:
+        struct udp_pcb*   pcb_;
+        recv_function     recv_func_;
+        udp_endpoint_pair endp_pair_;
+    };
 
-    inline static std::shared_ptr<tcp_conn> tcp_listen_any()
-    {
-        auto pcb     = lwip_tcp_new();
-        auto alt_pcb = altcp_tcp_wrap(pcb);
+    class udp_creator : public std::enable_shared_from_this<udp_creator> {
+    public:
+        using udp_create_function = std::function<void(std::shared_ptr<udp_conn>)>;
 
-        auto any = ip_addr_any;
-        altcp_bind(alt_pcb, &any, 0);
-        altcp_listen(alt_pcb);
+    public:
+        udp_creator()
+        {
+            udp_create(
+                [](struct udp_pcb* newpcb, void* arg) {
+                    auto self = (udp_creator*)arg;
+                    self->on_udp(newpcb);
+                },
+                this);
+        }
+        ~udp_creator()
+        {
+            udp_create(NULL, NULL);
+        }
 
-        return std::make_shared<tcp_conn>(alt_pcb);
-    }
+    public:
+        static std::shared_ptr<udp_creator> instance()
+        {
+            static std::weak_ptr<udp_creator> _instance;
 
-    inline static err_t lwip_tcp_write(struct tcp_pcb* pcb,
-                                       const void*     arg,
-                                       u16_t           len,
-                                       u8_t            apiflags)
-    {
-        return tcp_write(pcb, arg, len, apiflags);
-    }
+            auto obj = _instance.lock();
+            if (obj)
+                return obj;
 
-    inline static err_t lwip_udp_send(struct udp_pcb* pcb, struct pbuf* p)
-    {
-        return udp_send(pcb, p);
-    }
+            obj = std::make_shared<udp_creator>();
 
-    inline static u32_t lwip_tcp_sndbuf(tcp_pcb* pcb)
-    {
-        return tcp_sndbuf(pcb);
-    }
+            _instance = obj;
+            return obj;
+        }
+        void set_udp_create_function(udp_create_function f)
+        {
+            create_func_ = f;
+        }
 
-    inline static err_t lwip_tcp_output(tcp_pcb* pcb)
-    {
-        return ::tcp_output(pcb);
-    }
+    private:
+        void on_udp(struct udp_pcb* newpcb)
+        {
+            auto conn = std::make_shared<udp_conn>(newpcb);
+            if (!create_func_)
+                return;
 
-    inline static err_t lwip_tcp_close(tcp_pcb* pcb)
-    {
-        err_t err = tcp_shutdown(pcb, 1, 1) | tcp_close(pcb);
-        return err;
-    }
+            create_func_(conn);
+        }
+
+    private:
+        udp_create_function create_func_;
+    };
 
     inline void init(boost::asio::io_context& ctx)
     {

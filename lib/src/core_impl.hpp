@@ -99,16 +99,33 @@ private:
         route::init_route(tun_param_);
 
         lwip::instance().init(ioc_);
-        auto t_pcb = lwip::tcp_listen_any();
 
-        lwip::lwip_tcp_accept(t_pcb,
-                              std::bind(&core_impl::on_tcp_accept,
-                                        this,
-                                        std::placeholders::_1,
-                                        std::placeholders::_2,
-                                        std::placeholders::_3));
-        lwip::lwip_udp_create(
-            std::bind(&core_impl::on_udp_create, this, std::placeholders::_1));
+        tcp_accept_ = lwip::tcp_accept::instance();
+        tcp_accept_->set_accept_function([this](lwip::tcp_conn::ptr conn) {
+            auto proxy = std::make_shared<tcp_proxy>(
+                ioc_,
+                conn,
+                *this);
+
+            proxy->start();
+            tcps_.insert(proxy);
+
+            if (conn_open_func_)
+                conn_open_func_(proxy);
+        });
+
+        udp_creator_ = lwip::udp_creator::instance();
+        udp_creator_->set_udp_create_function([this](lwip::udp_conn::ptr conn) {
+
+            auto proxy = std::make_shared<udp_proxy>(ioc_,
+                                                     conn,
+                                                     *this);
+            proxy->start();
+            udps_.insert(proxy);
+
+            if (conn_open_func_)
+                conn_open_func_(proxy);
+        });
 
         lwip::instance().set_ip_output(std::bind(&core_impl::on_ip_output,
                                                  this,
@@ -124,19 +141,7 @@ private:
         ioc_.run(ec);
         return false;
     }
-    void on_udp_create(struct udp_pcb* newpcb)
-    {
-        auto endpoint_pair = lwip::create_endpoint(newpcb);
-        auto proxy         = std::make_shared<udp_proxy>(ioc_,
-                                                 endpoint_pair,
-                                                 newpcb,
-                                                 *this);
-        proxy->start();
-        udps_.insert(proxy);
 
-        if (conn_open_func_)
-            conn_open_func_(proxy);
-    }
     void on_ip_output(const wrapper::pbuf_buffer& p)
     {
         bool write_in_process = !send_queue_.empty();
@@ -168,24 +173,6 @@ private:
                 }
             },
             boost::asio::detached);
-    }
-
-    err_t on_tcp_accept(void* arg, struct tcp_pcb* newpcb, err_t err)
-    {
-        if (err != ERR_OK || newpcb == NULL)
-            return ERR_VAL;
-
-        auto endpoint_pair = lwip::create_endpoint(newpcb);
-        auto proxy         = std::make_shared<tcp_proxy>(ioc_,
-                                                 newpcb,
-                                                 endpoint_pair,
-                                                 *this);
-
-        proxy->start();
-        tcps_.insert(proxy);
-        if (conn_open_func_)
-            conn_open_func_(proxy);
-        return ERR_OK;
     }
 
     boost::asio::awaitable<void> read_tun_ip_packet()
@@ -397,5 +384,8 @@ private:
     connection::close_function conn_close_func_;
 
     std::optional<route::adapter_info> default_adapter_;
+
+    std::shared_ptr<lwip::tcp_accept>  tcp_accept_;
+    std::shared_ptr<lwip::udp_creator> udp_creator_;
 };
 }  // namespace tun2socks

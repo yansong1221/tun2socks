@@ -15,12 +15,11 @@ public:
     using ptr = std::shared_ptr<udp_proxy>;
 
     explicit udp_proxy(boost::asio::io_context& ioc,
-                       const udp_endpoint_pair& endpoint_pair,
-                       struct udp_pcb*          pcb,
+                       lwip::udp_conn::ptr      conn,
                        core_impl_api&           core)
-        : udp_basic_connection(ioc, endpoint_pair),
+        : udp_basic_connection(ioc, conn->endp_pair()),
           core_(core),
-          pcb_(pcb),
+          conn_(conn),
           timeout_timer_(ioc)
     {
         lwip::lwip_udp_recv(pcb_, std::bind(&udp_proxy::on_udp_recved,
@@ -58,10 +57,10 @@ protected:
                                                                       proxy_endpoint_,
                                                                       net_awaitable[ec]);
                     if (ec) {
-                        //spdlog::warn("Failed to receive UDP data from the remote end : [{}]:{} {}",
-                        //             proxy_endpoint_.address().to_string(),
-                        //             proxy_endpoint_.port(),
-                        //             ec.message());
+                        // spdlog::warn("Failed to receive UDP data from the remote end : [{}]:{} {}",
+                        //              proxy_endpoint_.address().to_string(),
+                        //              proxy_endpoint_.port(),
+                        //              ec.message());
                         do_close();
                         co_return;
                     }
@@ -120,10 +119,10 @@ private:
             buffer.data(), proxy_endpoint_,
             [this, buffer, self = shared_from_this()](const boost::system::error_code& ec, std::size_t bytes) {
                 if (ec) {
-                    //spdlog::warn("Sending UDP data failed: [{}]:{} {}",
-                    //             proxy_endpoint_.address().to_string(),
-                    //             proxy_endpoint_.port(),
-                    //             ec.message());
+                    // spdlog::warn("Sending UDP data failed: [{}]:{} {}",
+                    //              proxy_endpoint_.address().to_string(),
+                    //              proxy_endpoint_.port(),
+                    //              ec.message());
                     do_close();
                     return;
                 }
@@ -136,7 +135,7 @@ private:
     }
 
 private:
-    struct udp_pcb* pcb_ = nullptr;
+    lwip::udp_conn::ptr conn_;
 
     core_impl_api::udp_socket_ptr socket_;
     core_impl_api&                core_;

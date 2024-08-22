@@ -19,11 +19,10 @@ public:
 
 public:
     tcp_proxy(boost::asio::io_context& ioc,
-              struct tcp_pcb*          pcb,
-              const tcp_endpoint_pair& local_endpoint_pair,
+              lwip::tcp_conn::ptr      conn,
               core_impl_api&           core)
-        : tcp_basic_connection(ioc, local_endpoint_pair),
-          pcb_(pcb),
+        : tcp_basic_connection(ioc, conn->endp_pair()),
+          conn_(conn),
           core_(core)
     {
         lwip::lwip_tcp_receive(pcb_, std::bind(&tcp_proxy::on_recved,
@@ -136,7 +135,7 @@ private:
     }
 
 private:
-    struct tcp_pcb* pcb_ = NULL;
+    lwip::tcp_conn::ptr conn_;
 
     core_impl_api&                core_;
     core_impl_api::tcp_socket_ptr socket_;
