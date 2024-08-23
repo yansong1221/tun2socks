@@ -10,7 +10,7 @@ namespace wrapper {
     class pbuf_buffer {
     public:
         pbuf_buffer() = default;
-        pbuf_buffer(pbuf* p)
+        explicit pbuf_buffer(pbuf* p)
         {
             data_ = p;
             pbuf_ref(data_);
@@ -73,12 +73,21 @@ namespace wrapper {
         {
             pbuf_realloc(data_, n);
         }
+        pbuf* release()
+        {
+            if (!data_)
+                return nullptr;
 
-        boost::asio::mutable_buffer data()
+            auto p = data_;
+            data_  = nullptr;
+            return p;
+        }
+
+        boost::asio::mutable_buffer mutable_data()
         {
             return boost::asio::mutable_buffer(data_->payload, data_->tot_len);
         }
-        boost::asio::const_buffer data() const
+        boost::asio::const_buffer const_data() const
         {
             return boost::asio::const_buffer(data_->payload, data_->tot_len);
         }

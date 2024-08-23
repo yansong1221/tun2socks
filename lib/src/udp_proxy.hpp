@@ -38,7 +38,7 @@ protected:
 
                 reset_timeout_timer();
                 socket_->async_send_to(
-                    buffer.data(),
+                    buffer.const_data(),
                     proxy_endpoint_,
                     [this, buffer, self = shared_from_this()](const boost::system::error_code& ec, std::size_t bytes) {
                         if (ec) {
@@ -63,7 +63,7 @@ protected:
 
                     wrapper::pbuf_buffer buffer(4096);
 
-                    auto bytes = co_await socket_->async_receive_from(buffer.data(),
+                    auto bytes = co_await socket_->async_receive_from(buffer.mutable_data(),
                                                                       proxy_endpoint_,
                                                                       net_awaitable[ec]);
                     if (ec || !conn_) {

@@ -2,7 +2,6 @@
 
 #include <boost/asio.hpp>
 #include <boost/bind.hpp>
-#include <lwip/altcp_tcp.h>
 #include <lwip/init.h>
 #include <lwip/netif.h>
 #include <lwip/sys.h>
@@ -18,13 +17,15 @@
 
 #include "address_pair.hpp"
 #include "endpoint_pair.hpp"
-#include "use_awaitable.hpp"
-
 #include "pbuf.hpp"
+#include "use_awaitable.hpp"
 
 namespace tun2socks {
 
 class lwip {
+public:
+    using ip_packet_output_function = std::function<void(wrapper::pbuf_buffer)>;
+
 public:
     inline static lwip& instance()
     {
@@ -54,16 +55,6 @@ public:
             return address_pair_type(src_ip, dest_ip);
         }
     }
-    inline static tcp_endpoint_pair create_endpoint(struct tcp_pcb* newpcb)
-    {  // Ports are always in host byte order.
-        auto src_port  = newpcb->remote_port;
-        auto dest_port = newpcb->local_port;
-        auto addr_pair = create_address_pair(newpcb->local_ip,
-                                             newpcb->remote_ip);
-        return tcp_endpoint_pair(addr_pair,
-                                 src_port,
-                                 dest_port);
-    }
     inline static udp_endpoint_pair create_endpoint(struct udp_pcb* newpcb)
     {  // Ports are always in host byte order.
         auto src_port  = newpcb->remote_port;
@@ -75,8 +66,55 @@ public:
                                  src_port,
                                  dest_port);
     }
+    inline static tcp_endpoint_pair create_endpoint(struct tcp_pcb* newpcb)
+    {  // Ports are always in host byte order.
+        auto src_port  = newpcb->remote_port;
+        auto dest_port = newpcb->local_port;
+        auto addr_pair = create_address_pair(newpcb->local_ip,
+                                             newpcb->remote_ip);
+        return tcp_endpoint_pair(addr_pair,
+                                 src_port,
+                                 dest_port);
+    }
 
-    using ip_packet_output_function = std::function<void(wrapper::pbuf_buffer)>;
+    inline static udp_pcb* lwip_udp_new()
+    {
+        return ::udp_new();
+    }
+
+    inline static err_t lwip_udp_bind(struct udp_pcb* pcb, const ip_addr_t* ipaddr, u16_t port)
+    {
+        return ::udp_bind(pcb, ipaddr, port);
+    }
+
+    inline static err_t lwip_udp_connect(struct udp_pcb* pcb, const ip_addr_t* ipaddr, u16_t port)
+    {
+        return udp_connect(pcb, ipaddr, port);
+    }
+
+    inline static void lwip_udp_create(udp_crt_fn create_fn)
+    {
+        return udp_create(create_fn, nullptr);
+    }
+
+    inline static void lwip_udp_recv(struct udp_pcb* pcb,
+                                     udp_recv_fn     recv)
+    {
+        return udp_recv(pcb, recv, NULL);
+    }
+    inline static void lwip_udp_disconnect(struct udp_pcb* pcb)
+    {
+        ::udp_disconnect(pcb);
+    }
+
+    inline static void lwip_udp_remove(struct udp_pcb* pcb)
+    {
+        return udp_remove(pcb);
+    }
+    inline static err_t lwip_udp_send(struct udp_pcb* pcb, struct pbuf* p)
+    {
+        return udp_send(pcb, p);
+    }
 
     class tcp_conn : public std::enable_shared_from_this<tcp_conn> {
     public:
@@ -143,11 +181,21 @@ public:
     private:
         err_t on_recv(struct pbuf* p, err_t err)
         {
-            auto buffer = wrapper::pbuf_buffer::smart_copy(p);
             if (!recv_func_)
                 return ERR_MEM;
 
-            return recv_func_(buffer, err);
+            if (err != ERR_OK) {
+                recv_func_(wrapper::pbuf_buffer(), err);
+                return ERR_OK;
+            }
+
+            auto buffer = wrapper::pbuf_buffer::smart_copy(p);
+
+            err = recv_func_(buffer, err);
+            if (err == ERR_OK && p)
+                pbuf_free(p);
+
+            return err;
         }
         err_t on_sent(u16_t len)
         {
@@ -159,24 +207,28 @@ public:
         recv_function   recv_func_;
     };
 
-    class tcp_accept : public std::enable_shared_from_this<tcp_accept> {
+    class tcp_accepter : public std::enable_shared_from_this<tcp_accepter> {
     public:
         using accept_function = std::function<void(tcp_conn::ptr)>;
 
     public:
-        tcp_accept(struct tcp_pcb* pcb)
-            : pcb_(pcb)
+        tcp_accepter()
         {
+            auto pcb = ::tcp_new();
+            auto any = ip_addr_any;
+            tcp_bind(pcb, &any, 0);
+            pcb_ = ::tcp_listen(pcb);
+
             ::tcp_arg(pcb_, this);
             ::tcp_accept(pcb_, [](void* arg, struct tcp_pcb* new_conn, err_t err) -> err_t {
                 if (err != ERR_OK)
                     return ERR_VAL;
 
-                auto self = (tcp_accept*)arg;
+                auto self = (tcp_accepter*)arg;
                 return self->on_accept(new_conn);
             });
         }
-        virtual ~tcp_accept()
+        virtual ~tcp_accepter()
         {
             tcp_close(pcb_);
         }
@@ -187,19 +239,15 @@ public:
         }
 
     public:
-        static std::shared_ptr<tcp_accept> instance()
+        static std::shared_ptr<tcp_accepter> instance()
         {
-            static std::weak_ptr<tcp_accept> _instance;
+            static std::weak_ptr<tcp_accepter> _instance;
 
             auto obj = _instance.lock();
             if (obj)
                 return obj;
 
-            auto pcb = ::tcp_new();
-            auto any = ip_addr_any;
-            tcp_bind(pcb, &any, 0);
-
-            obj = std::make_shared<tcp_accept>(::tcp_listen(pcb));
+            obj = std::make_shared<tcp_accepter>();
 
             _instance = obj;
             return obj;
@@ -220,6 +268,7 @@ public:
         struct tcp_pcb* pcb_;
         accept_function accept_func_;
     };
+
     class udp_conn : public std::enable_shared_from_this<udp_conn> {
     public:
         using recv_function = std::function<void(wrapper::pbuf_buffer)>;
@@ -265,7 +314,7 @@ public:
             LWIP_UNUSED_ARG(addr);
             LWIP_UNUSED_ARG(port);
             auto buffer = wrapper::pbuf_buffer::smart_copy(p);
-
+            pbuf_free(p);
             if (!recv_func_)
                 return;
 
@@ -333,8 +382,7 @@ public:
     inline void init(boost::asio::io_context& ctx)
     {
         lwip_init();
-        netif_default = netif_list;
-
+        netif_default    = netif_list;
         loopback_        = netif_list;
         loopback_->state = this;
 
@@ -371,14 +419,14 @@ public:
             },
             boost::asio::detached);
     }
+    inline err_t ip_input(wrapper::pbuf_buffer buffer)
+    {
+        return loopback_->input(buffer.release(), loopback_);
+    }
 
     inline void set_ip_output(ip_packet_output_function f)
     {
         ip_output_func_ = f;
-    }
-    inline err_t lwip_ip_input(pbuf* p)
-    {
-        return loopback_->input(p, loopback_);
     }
 
 private:

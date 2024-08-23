@@ -48,10 +48,10 @@ protected:
 
                 boost::asio::async_write(
                     *socket_,
-                    buffer.data(),
+                    buffer.const_data(),
                     [this, self, buffer](const boost::system::error_code& ec, std::size_t bytes) {
                         write_in_process_ = false;
-                        if (ec) {
+                        if (ec || !conn_) {
                             do_close();
                             return;
                         }
@@ -73,11 +73,11 @@ protected:
                 boost::system::error_code ec;
 
                 uint8_t buffer[TCP_MSS];
-                for (;;) {
+                for (; conn_;) {
                     auto sz    = std::min<uint16_t>(TCP_MSS, conn_->buf_len());
                     auto bytes = co_await socket_->async_read_some(boost::asio::mutable_buffer(buffer, sz),
                                                                    net_awaitable[ec]);
-                    if (ec) {
+                    if (ec || !conn_) {
                         do_close();
                         co_return;
                     }
