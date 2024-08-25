@@ -77,50 +77,11 @@ public:
                                  dest_port);
     }
 
-    inline static udp_pcb* lwip_udp_new()
-    {
-        return ::udp_new();
-    }
-
-    inline static err_t lwip_udp_bind(struct udp_pcb* pcb, const ip_addr_t* ipaddr, u16_t port)
-    {
-        return ::udp_bind(pcb, ipaddr, port);
-    }
-
-    inline static err_t lwip_udp_connect(struct udp_pcb* pcb, const ip_addr_t* ipaddr, u16_t port)
-    {
-        return udp_connect(pcb, ipaddr, port);
-    }
-
-    inline static void lwip_udp_create(udp_crt_fn create_fn)
-    {
-        return udp_create(create_fn, nullptr);
-    }
-
-    inline static void lwip_udp_recv(struct udp_pcb* pcb,
-                                     udp_recv_fn     recv)
-    {
-        return udp_recv(pcb, recv, NULL);
-    }
-    inline static void lwip_udp_disconnect(struct udp_pcb* pcb)
-    {
-        ::udp_disconnect(pcb);
-    }
-
-    inline static void lwip_udp_remove(struct udp_pcb* pcb)
-    {
-        return udp_remove(pcb);
-    }
-    inline static err_t lwip_udp_send(struct udp_pcb* pcb, struct pbuf* p)
-    {
-        return udp_send(pcb, p);
-    }
-
     class tcp_conn : public std::enable_shared_from_this<tcp_conn> {
     public:
         using ptr = std::shared_ptr<tcp_conn>;
 
-        using recv_function = std::function<err_t(wrapper::pbuf_buffer, err_t)>;
+        using recv_function = std::function<err_t(const wrapper::pbuf_buffer&, err_t)>;
 
     public:
         tcp_conn(struct tcp_pcb* pcb)
@@ -167,6 +128,10 @@ public:
             if (err != ERR_OK)
                 return err;
 
+            return output();
+        }
+        inline err_t output()
+        {
             return tcp_output(pcb_);
         }
         inline tcp_endpoint_pair endp_pair() const
@@ -410,7 +375,7 @@ public:
                     boost::system::error_code ec;
                     boost::asio::steady_timer update_timer(
                         co_await boost::asio::this_coro::executor);
-                    update_timer.expires_from_now(std::chrono::seconds(1));
+                    update_timer.expires_from_now(std::chrono::milliseconds(1));
                     co_await update_timer.async_wait(net_awaitable[ec]);
                     if (ec)
                         co_return;

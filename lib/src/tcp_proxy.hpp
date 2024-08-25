@@ -35,13 +35,16 @@ protected:
     virtual void on_connection_start() override
     {
         conn_->set_recv_function(
-            [this, self = shared_from_this()](wrapper::pbuf_buffer buffer, err_t err) -> err_t {
+            [this, self = shared_from_this()](const wrapper::pbuf_buffer& buffer, err_t err) -> err_t {
                 if (err != ERR_OK || !buffer) {
                     do_close();
                     return ERR_OK;
                 }
 
-                if (!socket_ || write_in_process_)
+                if (!socket_)
+                    return ERR_MEM;
+
+                if (write_in_process_)
                     return ERR_MEM;
 
                 write_in_process_ = true;
@@ -74,6 +77,7 @@ protected:
 
                 uint8_t buffer[TCP_MSS];
                 for (; conn_;) {
+
                     auto sz    = std::min<uint16_t>(TCP_MSS, conn_->buf_len());
                     auto bytes = co_await socket_->async_read_some(boost::asio::mutable_buffer(buffer, sz),
                                                                    net_awaitable[ec]);
