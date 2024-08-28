@@ -75,18 +75,20 @@ protected:
 
                 boost::system::error_code ec;
 
-                uint8_t buffer[TCP_MSS];
                 for (; conn_;) {
+                    wrapper::pbuf_buffer buffer(conn_->buf_len());
 
-                    auto sz    = std::min<uint16_t>(TCP_MSS, conn_->buf_len());
-                    auto bytes = co_await socket_->async_read_some(boost::asio::mutable_buffer(buffer, sz),
+                    auto bytes = co_await socket_->async_read_some(buffer.mutable_data(),
                                                                    net_awaitable[ec]);
                     if (ec || !conn_) {
                         do_close();
                         co_return;
                     }
+                    buffer.realloc(bytes);
 
-                    err_t err = conn_->write(buffer, bytes);
+                    auto data = buffer.const_data();
+
+                    err_t err = conn_->write(data.data(), data.size());
                     if (err != ERR_OK) {
                         do_close();
                         co_return;
