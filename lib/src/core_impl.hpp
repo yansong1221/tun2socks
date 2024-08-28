@@ -159,22 +159,22 @@ private:
     boost::asio::awaitable<tcp_socket_ptr> create_proxy_socket(
         connection::ptr conn) override
     {
-        spdlog::info("TCP proxy: {}", conn->endpoint_pair().to_string());
-
         auto socket = std::make_shared<boost::asio::ip::tcp::socket>(
             co_await boost::asio::this_coro::executor);
 
-        if (proxy_policy_.is_direct(*conn)) {
+        boost::asio::ip::tcp::endpoint dest(boost::asio::ip::address::from_string(conn->remote_endpoint().first), conn->remote_endpoint().second);
+
+        if (proxy_policy_.is_direct(conn)) {
             boost::system::error_code ec;
-            open_bind_socket(*socket, conn->endpoint_pair().dest, ec);
+            open_bind_socket(*socket, dest, ec);
             if (ec)
                 co_return nullptr;
 
-            co_await socket->async_connect(conn->endpoint_pair().dest, net_awaitable[ec]);
+            co_await socket->async_connect(dest, net_awaitable[ec]);
             if (ec) {
                 spdlog::warn("Failed to connect to remote TCP endpoint [{0}]:{1}",
-                             conn->endpoint_pair().dest.address().to_string(),
-                             conn->endpoint_pair().dest.port());
+                             dest.address().to_string(),
+                             dest.port());
                 co_return nullptr;
             }
         }
@@ -182,7 +182,7 @@ private:
             boost::system::error_code ec;
 
             boost::asio::ip::tcp::endpoint remote_endp;
-            co_await connect_socks5_server(*socket, conn->endpoint_pair().dest, remote_endp, ec);
+            co_await connect_socks5_server(*socket, dest, remote_endp, ec);
             if (ec)
                 co_return nullptr;
         }
@@ -197,7 +197,7 @@ private:
         auto socket = std::make_shared<boost::asio::ip::udp::socket>(
             co_await boost::asio::this_coro::executor);
 
-        if (proxy_policy_.is_direct(*conn)) {
+        if (proxy_policy_.is_direct(conn)) {
             boost::system::error_code ec;
             open_bind_socket(*socket, conn->endpoint_pair().dest, ec);
             if (ec)

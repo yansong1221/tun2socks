@@ -98,5 +98,6 @@ if(MSVC)
 		"$<$<CXX_COMPILER_ID:MSVC>:/source-charset:utf-8>"
 		"$<$<CXX_COMPILER_ID:MSVC>:/execution-charset:utf-8>"
 		
-	)                             
+	)
+	target_compile_definitions(${MODULE} PRIVATE _WIN32_WINNT=0x0601)
 endif(MSVC)

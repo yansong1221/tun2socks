@@ -16,11 +16,14 @@ public:
         : ioc_(ioc)
     {
     }
-    template <typename InternetProtocol>
-    inline bool is_direct(const basic_connection<InternetProtocol>& conn)
+
+    inline bool is_direct(connection::ptr conn)
     {
-        const auto& endpoint_pair = conn.endpoint_pair();
-        auto        dest_addr     = endpoint_pair.dest.address();
+        auto dest_endp = conn->remote_endpoint();
+        auto src_endp = conn->local_endpoint();
+
+        auto dest_port = dest_endp.second;
+        auto dest_addr = boost::asio::ip::address::from_string(dest_endp.first);
 
         if (auto iter = addresses_.find(dest_addr);
             iter != addresses_.end()) {
@@ -30,9 +33,9 @@ public:
             return iter->second;
         }
 
-        auto pid = conn.get_pid();
+        auto pid = conn->get_pid();
         if (!pid) {
-            spdlog::warn("Process information for port not found: {}", endpoint_pair.to_string());
+            spdlog::warn("Process information for port not found: [{}]:{}", src_endp.first, src_endp.second);
             return default_direct_;
         }
         if (auto iter = process_pid_.find(*pid);
@@ -43,9 +46,9 @@ public:
             return iter->second;
         }
 
-        auto exe_path = conn.get_execute_path();
+        auto exe_path = conn->get_execute_path();
         if (!exe_path) {
-            spdlog::warn("Process process path for pid not found: {}, {}", *pid, endpoint_pair.to_string());
+            spdlog::warn("Process process path for pid not found: {},  [{}]:{}", *pid, src_endp.first, src_endp.second);
             return default_direct_;
         }
 
