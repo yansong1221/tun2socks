@@ -52,7 +52,7 @@ public:
 
         this->on_connection_start();
     }
-    void stop()
+    void stop() override
     {
         boost::system::error_code ec;
         update_timer_.cancel(ec);
@@ -77,17 +77,13 @@ public:
         else
             static_assert(std::is_same_v<InternetProtocol, InternetProtocol>, "error internet protocol");
     }
-    std::string local_endpoint() const override
+    endpoint local_endpoint() const override
     {
-        return fmt::format("[{}]:{}",
-                           endpoint_pair_.src.address().to_string(),
-                           endpoint_pair_.src.port());
+        return std::make_pair(endpoint_pair_.src.address().to_string(), endpoint_pair_.src.port());
     }
-    std::string remote_endpoint() const override
+    endpoint remote_endpoint() const override
     {
-        return fmt::format("[{}]:{}",
-                           endpoint_pair_.dest.address().to_string(),
-                           endpoint_pair_.dest.port());
+        return std::make_pair(endpoint_pair_.dest.address().to_string(), endpoint_pair_.dest.port());
     }
     uint32_t get_speed_download_1s() const override
     {

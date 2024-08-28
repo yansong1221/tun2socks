@@ -20,13 +20,13 @@ int main(int argc, char** argv)
 
     tun2socks::parameter::tun_device::address tun_ipv4;
     tun_ipv4.addr          = "10.6.7.7";
-    tun_ipv4.dns           = "114.114.114.114";
+    //tun_ipv4.dns           = "114.114.114.114";
     tun_ipv4.prefix_length = 24;
     param.ipv4             = tun_ipv4;
 
     tun2socks::parameter::tun_device::address tun_ipv6;
     tun_ipv6.addr          = "fe80::613b:4e3f:81e9:7e01";
-    tun_ipv6.dns           = "2606:4700:4700::1111";
+    //tun_ipv6.dns           = "2606:4700:4700::1111";
     tun_ipv6.prefix_length = 64;
     param.ipv6             = tun_ipv6;
 
@@ -42,7 +42,7 @@ int main(int argc, char** argv)
     // tun2socks_.proxy_policy().set_process(R"(C:\Program Files\Clash Verge\verge-mihomo.exe)", true);
     tun2socks_.proxy_policy().set_process(10108, true);
     tun2socks_.proxy_policy().set_default_direct(true);
-    tun2socks_.tcp_connections();
+    tun2socks_.connections();
 
     try {
         tun2socks_.start(param, socks5_param);

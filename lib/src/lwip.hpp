@@ -32,28 +32,26 @@ public:
         static lwip _stack;
         return _stack;
     }
-    inline static address_pair_type create_address_pair(const ip_addr_t& local_ip,
-                                                        const ip_addr_t& remote_ip)
+    inline static boost::asio::ip::address address_from_lwip(const ip_addr_t& addr)
     {
-        if (local_ip.type == IPADDR_TYPE_V4) {
+        if (addr.type == IPADDR_TYPE_V4) {
             // IP addresses are always in network order.
-            boost::asio::ip::address_v4 dest_ip(
-                boost::asio::detail::socket_ops::network_to_host_long(local_ip.u_addr.ip4.addr));
-            boost::asio::ip::address_v4 src_ip(
-                boost::asio::detail::socket_ops::network_to_host_long(remote_ip.u_addr.ip4.addr));
-
-            return address_pair_type(src_ip, dest_ip);
+            return boost::asio::ip::address_v4(
+                boost::asio::detail::socket_ops::network_to_host_long(addr.u_addr.ip4.addr));
         }
         else {
             // IP addresses are always in network order.
             boost::asio::ip::address_v6::bytes_type dest_ip;
-            boost::asio::ip::address_v6::bytes_type src_ip;
-
-            memcpy(dest_ip.data(), local_ip.u_addr.ip6.addr, 16);
-            memcpy(src_ip.data(), remote_ip.u_addr.ip6.addr, 16);
-
-            return address_pair_type(src_ip, dest_ip);
+            memcpy(dest_ip.data(), addr.u_addr.ip6.addr, 16);
+            return boost::asio::ip::address_v6(dest_ip);
         }
+    }
+    inline static address_pair_type create_address_pair(const ip_addr_t& local_ip,
+                                                        const ip_addr_t& remote_ip)
+    {
+        auto dest_ip = address_from_lwip(local_ip);
+        auto src_ip  = address_from_lwip(remote_ip);
+        return address_pair_type(src_ip, dest_ip);
     }
     inline static udp_endpoint_pair create_endpoint(struct udp_pcb* newpcb)
     {  // Ports are always in host byte order.
@@ -236,7 +234,7 @@ public:
 
     class udp_conn : public std::enable_shared_from_this<udp_conn> {
     public:
-        using recv_function = std::function<void(wrapper::pbuf_buffer)>;
+        using recv_function = std::function<void(const wrapper::pbuf_buffer&, const boost::asio::ip::udp::endpoint&)>;
         using ptr           = std::shared_ptr<udp_conn>;
 
     public:
@@ -260,9 +258,15 @@ public:
         }
 
     public:
-        err_t send(wrapper::pbuf_buffer buf)
+        err_t send(const wrapper::pbuf_buffer& buf)
         {
             return udp_send(pcb_, &buf);
+        }
+        err_t send_to(const wrapper::pbuf_buffer& buf, const boost::asio::ip::udp::endpoint& to)
+        {
+            ip_addr_t addr;
+            ipaddr_aton(to.address().to_string().c_str(), &addr);
+            return udp_sendto(pcb_, &buf, &addr, to.port());
         }
         inline udp_endpoint_pair endp_pair() const
         {
@@ -276,14 +280,13 @@ public:
     private:
         void on_recv(struct pbuf* p, const ip_addr_t* addr, u16_t port)
         {
-            LWIP_UNUSED_ARG(addr);
-            LWIP_UNUSED_ARG(port);
             auto buffer = wrapper::pbuf_buffer::smart_copy(p);
             pbuf_free(p);
             if (!recv_func_)
                 return;
 
-            recv_func_(buffer);
+            boost::asio::ip::udp::endpoint from(address_from_lwip(*addr), port);
+            recv_func_(buffer, from);
         }
 
     private:

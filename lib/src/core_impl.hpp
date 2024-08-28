@@ -45,7 +45,7 @@ public:
             conn_close_func_ = handle;
         });
     }
-    std::vector<connection::weak_ptr> udp_connections()
+    std::vector<connection::weak_ptr> connections()
     {
         if (!is_runing())
             return {};
@@ -53,22 +53,7 @@ public:
         auto result = std::make_shared<std::promise<std::vector<connection::weak_ptr>>>();
         ioc_.dispatch([this, result]() mutable -> void {
             std::vector<connection::weak_ptr> items;
-            for (const auto& v : udps_)
-                items.push_back(v);
-
-            result->set_value(items);
-        });
-        return result->get_future().get();
-    }
-    std::vector<connection::weak_ptr> tcp_connections()
-    {
-        if (!is_runing())
-            return {};
-
-        auto result = std::make_shared<std::promise<std::vector<connection::weak_ptr>>>();
-        ioc_.dispatch([this, result]() mutable -> void {
-            std::vector<connection::weak_ptr> items;
-            for (const auto& v : tcps_)
+            for (const auto& v : conns_)
                 items.push_back(v);
 
             result->set_value(items);
@@ -107,7 +92,7 @@ private:
                                                      *this);
 
             proxy->start();
-            tcps_.insert(proxy);
+            conns_.insert(proxy);
             if (conn_open_func_)
                 conn_open_func_(proxy);
         });
@@ -118,14 +103,11 @@ private:
                                                      newpcb,
                                                      *this);
             proxy->start();
-            udps_.insert(proxy);
+            conns_.insert(proxy);
 
             if (conn_open_func_)
                 conn_open_func_(proxy);
         });
-
-        /*lwip::lwip_udp_create(
-            std::bind(&core_impl::on_udp_create, this, std::placeholders::_1));*/
 
         lwip::instance().set_ip_output([this](const wrapper::pbuf_buffer& buffer) {
             bool write_in_process = !send_queue_.empty();
@@ -175,7 +157,7 @@ private:
     }
 
     boost::asio::awaitable<tcp_socket_ptr> create_proxy_socket(
-        std::shared_ptr<tcp_basic_connection> conn) override
+        connection::ptr conn) override
     {
         spdlog::info("TCP proxy: {}", conn->endpoint_pair().to_string());
 
@@ -235,29 +217,16 @@ private:
         }
         co_return socket;
     }
-    void close_endpoint_pair(std::shared_ptr<udp_basic_connection> conn) override
+    void remove_conn(connection::ptr conn) override
     {
-        auto iter = udps_.find(conn);
-        if (iter == udps_.end())
+        auto iter = conns_.find(conn);
+        if (iter == conns_.end())
             return;
 
         if (conn_close_func_)
             conn_close_func_(conn);
 
-        (*iter)->stop();
-        udps_.erase(iter);
-    }
-    void close_endpoint_pair(std::shared_ptr<tcp_basic_connection> conn) override
-    {
-        auto iter = tcps_.find(conn);
-        if (iter == tcps_.end())
-            return;
-
-        if (conn_close_func_)
-            conn_close_func_(conn);
-
-        (*iter)->stop();
-        tcps_.erase(iter);
+        conns_.erase(iter);
     }
 
 private:
@@ -360,8 +329,7 @@ private:
     std::deque<wrapper::pbuf_buffer> send_queue_;
     proxy_policy_impl                proxy_policy_;
 
-    std::unordered_set<std::shared_ptr<udp_basic_connection>> udps_;
-    std::unordered_set<std::shared_ptr<tcp_basic_connection>> tcps_;
+    std::unordered_set<connection::ptr> conns_;
 
     connection::open_function  conn_open_func_;
     connection::close_function conn_close_func_;

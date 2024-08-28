@@ -25,6 +25,7 @@ public:
           conn_(conn),
           core_(core)
     {
+        spdlog::info("TCP proxy: {}", conn->endp_pair().to_string());
     }
     ~tcp_proxy()
     {
@@ -37,30 +38,18 @@ protected:
         conn_->set_recv_function(
             [this, self = shared_from_this()](const wrapper::pbuf_buffer& buffer, err_t err) -> err_t {
                 if (err != ERR_OK || !buffer) {
-                    do_close();
+                    stop();
                     return ERR_OK;
                 }
 
                 if (!socket_)
                     return ERR_MEM;
 
-                if (write_in_process_)
-                    return ERR_MEM;
+                auto write_in_process = !write_queue_.empty();
+                write_queue_.push_back(buffer);
+                if (!write_in_process)
+                    start_write_to_proxy();
 
-                write_in_process_ = true;
-
-                boost::asio::async_write(
-                    *socket_,
-                    buffer.const_data(),
-                    [this, self, buffer](const boost::system::error_code& ec, std::size_t bytes) {
-                        write_in_process_ = false;
-                        if (ec || !conn_) {
-                            do_close();
-                            return;
-                        }
-
-                        conn_->recved(bytes);
-                    });
                 return ERR_OK;
             });
 
@@ -69,7 +58,7 @@ protected:
             [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
                 socket_ = co_await core_.create_proxy_socket(shared_from_this());
                 if (!socket_) {
-                    do_close();
+                    stop();
                     co_return;
                 }
 
@@ -81,7 +70,7 @@ protected:
                     auto bytes = co_await socket_->async_read_some(buffer.mutable_data(),
                                                                    net_awaitable[ec]);
                     if (ec || !conn_) {
-                        do_close();
+                        stop();
                         co_return;
                     }
                     buffer.realloc(bytes);
@@ -90,7 +79,7 @@ protected:
 
                     err_t err = conn_->write(data.data(), data.size());
                     if (err != ERR_OK) {
-                        do_close();
+                        stop();
                         co_return;
                     }
                     update_download_bytes(bytes);
@@ -108,19 +97,36 @@ protected:
             boost::system::error_code ec;
             socket_->close(ec);
         }
+        write_queue_.clear();
+        core_.remove_conn(shared_from_this());
     }
 
 private:
-    inline void do_close()
+    void start_write_to_proxy()
     {
-        core_.close_endpoint_pair(shared_from_this());
+        boost::asio::co_spawn(
+            get_io_context(), [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
+                boost::system::error_code ec;
+                while (!write_queue_.empty()) {
+                    const auto& buf   = write_queue_.front();
+                    auto        bytes = co_await boost::asio::async_write(*socket_, buf.const_data(), net_awaitable[ec]);
+                    if (ec || !conn_) {
+                        stop();
+                        co_return;
+                    }
+                    BOOST_ASSERT(bytes == buf.len());
+                    write_queue_.pop_front();
+                    conn_->recved(bytes);
+                }
+            },
+            boost::asio::detached);
     }
 
 private:
     lwip::tcp_conn::ptr conn_;
 
-    core_impl_api&                core_;
-    core_impl_api::tcp_socket_ptr socket_;
-    bool                          write_in_process_ = false;
+    core_impl_api&                   core_;
+    core_impl_api::tcp_socket_ptr    socket_;
+    std::deque<wrapper::pbuf_buffer> write_queue_;
 };
 }  // namespace tun2socks

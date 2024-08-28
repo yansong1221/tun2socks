@@ -16,8 +16,7 @@ public:
     void set_connection_open_function(connection::open_function handle);
     void set_connection_close_function(connection::open_function handle);
 
-    std::vector<connection::weak_ptr> udp_connections() const;
-    std::vector<connection::weak_ptr> tcp_connections() const;
+    std::vector<connection::weak_ptr> connections() const;
 
     tun2socks::proxy_policy& proxy_policy();
 

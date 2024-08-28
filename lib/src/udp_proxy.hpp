@@ -32,7 +32,7 @@ protected:
     virtual void on_connection_start() override
     {
         conn_->set_recv_function(
-            [this, self = shared_from_this()](wrapper::pbuf_buffer buffer) {
+            [this, self = shared_from_this()](const wrapper::pbuf_buffer& buffer, const boost::asio::ip::udp::endpoint& from) {
                 if (!socket_)
                     return;
 
@@ -42,7 +42,7 @@ protected:
                     proxy_endpoint_,
                     [this, buffer, self = shared_from_this()](const boost::system::error_code& ec, std::size_t bytes) {
                         if (ec) {
-                            do_close();
+                            stop();
                             return;
                         }
                         update_upload_bytes(bytes);
@@ -53,7 +53,7 @@ protected:
                 socket_ = co_await core_.create_proxy_socket(self,
                                                              proxy_endpoint_);
                 if (!socket_) {
-                    do_close();
+                    stop();
                     co_return;
                 }
 
@@ -67,7 +67,7 @@ protected:
                                                                       proxy_endpoint_,
                                                                       net_awaitable[ec]);
                     if (ec || !conn_) {
-                        do_close();
+                        stop();
                         co_return;
                     }
 
@@ -88,6 +88,7 @@ protected:
             boost::system::error_code ec;
             socket_->close(ec);
         }
+        core_.remove_conn(shared_from_this());
     }
 
 private:
@@ -100,13 +101,10 @@ private:
             [this, self = shared_from_this()](boost::system::error_code ec) {
                 if (ec)
                     return;
-                do_close();
+                stop();
             });
     }
-    void do_close()
-    {
-        core_.close_endpoint_pair(shared_from_this());
-    }
+   
 
 private:
     lwip::udp_conn::ptr conn_;
