@@ -135,7 +135,7 @@ private:
             ioc_, [this]() -> boost::asio::awaitable<void> {
                 boost::system::error_code ec;
                 for (;;) {
-                    wrapper::pbuf_buffer buffer(65532);
+                    wrapper::pbuf_buffer buffer(1500);
 
                     auto bytes = co_await tuntap_.async_read_some(buffer.mutable_data(), ec);
                     if (ec)
@@ -162,7 +162,8 @@ private:
         auto socket = std::make_shared<boost::asio::ip::tcp::socket>(
             co_await boost::asio::this_coro::executor);
 
-        boost::asio::ip::tcp::endpoint dest(boost::asio::ip::address::from_string(conn->remote_endpoint().first), conn->remote_endpoint().second);
+        boost::asio::ip::tcp::endpoint dest(boost::asio::ip::address::from_string(conn->remote_endpoint().first),
+                                            conn->remote_endpoint().second);
 
         if (proxy_policy_.is_direct(conn)) {
             boost::system::error_code ec;
@@ -189,27 +190,28 @@ private:
         co_return socket;
     }
     boost::asio::awaitable<udp_socket_ptr> create_proxy_socket(
-        std::shared_ptr<udp_basic_connection> conn,
-        boost::asio::ip::udp::endpoint&       proxy_endpoint) override
+        connection::ptr                 conn,
+        boost::asio::ip::udp::endpoint& proxy_endpoint) override
     {
-        spdlog::info("UDP proxy: {}", conn->endpoint_pair().to_string());
-
         auto socket = std::make_shared<boost::asio::ip::udp::socket>(
             co_await boost::asio::this_coro::executor);
 
+        boost::asio::ip::udp::endpoint dest(boost::asio::ip::address::from_string(conn->remote_endpoint().first),
+                                            conn->remote_endpoint().second);
+
         if (proxy_policy_.is_direct(conn)) {
             boost::system::error_code ec;
-            open_bind_socket(*socket, conn->endpoint_pair().dest, ec);
+            open_bind_socket(*socket, dest, ec);
             if (ec)
                 co_return nullptr;
-            proxy_endpoint = conn->endpoint_pair().dest;
+            proxy_endpoint = dest;
         }
         else {
             boost::asio::ip::tcp::socket proxy_sock(co_await boost::asio::this_coro::executor);
 
             boost::system::error_code      ec;
             boost::asio::ip::udp::endpoint remote_endp;
-            co_await connect_socks5_server(proxy_sock, conn->endpoint_pair().dest, remote_endp, ec);
+            co_await connect_socks5_server(proxy_sock, dest, remote_endp, ec);
             if (ec)
                 co_return nullptr;
 
@@ -266,9 +268,10 @@ private:
         boost::asio::ip::basic_endpoint<InternetProtocol>&       remote_endp,
         boost::system::error_code&                               ec)
     {
-        auto endp = boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(socks5_proxy_.host,
-                                                                                 ec),
-                                                   socks5_proxy_.port);
+        auto endp = boost::asio::ip::tcp::endpoint(
+            boost::asio::ip::make_address(socks5_proxy_.host, ec),
+            socks5_proxy_.port);
+
         if (ec) {
             auto error = ec;
             ec.clear();

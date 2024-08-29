@@ -20,7 +20,8 @@ public:
     inline bool is_direct(connection::ptr conn)
     {
         auto dest_endp = conn->remote_endpoint();
-        auto src_endp = conn->local_endpoint();
+        auto src_endp  = conn->local_endpoint();
+        auto proc_info = conn->get_process_info();
 
         auto dest_port = dest_endp.second;
         auto dest_addr = boost::asio::ip::address::from_string(dest_endp.first);
@@ -33,26 +34,27 @@ public:
             return iter->second;
         }
 
-        auto pid = conn->get_pid();
-        if (!pid) {
+        if (!proc_info) {
             spdlog::warn("Process information for port not found: [{}]:{}", src_endp.first, src_endp.second);
             return default_direct_;
         }
-        if (auto iter = process_pid_.find(*pid);
+        if (auto iter = process_pid_.find(proc_info->pid);
             iter != process_pid_.end()) {
             spdlog::info("Match to pid: {} direct: {}",
-                         *pid,
+                         proc_info->pid,
                          iter->second);
             return iter->second;
         }
 
-        auto exe_path = conn->get_execute_path();
-        if (!exe_path) {
-            spdlog::warn("Process process path for pid not found: {},  [{}]:{}", *pid, src_endp.first, src_endp.second);
+        if (proc_info->execute_path.empty()) {
+            spdlog::warn("Process process path for pid not found: {},  [{}]:{}",
+                         proc_info->pid,
+                         src_endp.first,
+                         src_endp.second);
             return default_direct_;
         }
 
-        auto p = std::filesystem::path(*exe_path).lexically_normal().string();
+        auto p = std::filesystem::path(proc_info->execute_path).lexically_normal().string();
         if (auto iter = process_path_.find(p);
             iter != process_path_.end()) {
             spdlog::info("Match to process path: {} direct: {}",

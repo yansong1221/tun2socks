@@ -15,15 +15,11 @@ namespace tun2socks {
 
 class tcp_proxy : public tcp_basic_connection {
 public:
-    using ptr = std::shared_ptr<tcp_proxy>;
-
-public:
-    tcp_proxy(boost::asio::io_context& ioc,
-              lwip::tcp_conn::ptr      conn,
-              core_impl_api&           core)
-        : tcp_basic_connection(ioc, conn->endp_pair()),
-          conn_(conn),
-          core_(core)
+    explicit tcp_proxy(boost::asio::io_context& ioc,
+                       lwip::tcp_conn::ptr      conn,
+                       core_impl_api&           core)
+        : tcp_basic_connection(ioc, core, conn->endp_pair()),
+          conn_(conn)
     {
         spdlog::info("TCP proxy: {}", conn->endp_pair().to_string());
     }
@@ -56,7 +52,7 @@ protected:
         boost::asio::co_spawn(
             get_io_context(),
             [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
-                socket_ = co_await core_.create_proxy_socket(shared_from_this());
+                socket_ = co_await core_api().create_proxy_socket(shared_from_this());
                 if (!socket_) {
                     stop();
                     co_return;
@@ -98,7 +94,6 @@ protected:
             socket_->close(ec);
         }
         write_queue_.clear();
-        core_.remove_conn(shared_from_this());
     }
 
 private:
@@ -123,9 +118,7 @@ private:
     }
 
 private:
-    lwip::tcp_conn::ptr conn_;
-
-    core_impl_api&                   core_;
+    lwip::tcp_conn::ptr              conn_;
     core_impl_api::tcp_socket_ptr    socket_;
     std::deque<wrapper::pbuf_buffer> write_queue_;
 };

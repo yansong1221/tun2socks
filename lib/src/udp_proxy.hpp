@@ -12,16 +12,14 @@ namespace tun2socks {
 using namespace std::chrono_literals;
 class udp_proxy : public udp_basic_connection {
 public:
-    using ptr = std::shared_ptr<udp_proxy>;
-
     explicit udp_proxy(boost::asio::io_context& ioc,
                        lwip::udp_conn::ptr      conn,
                        core_impl_api&           core)
-        : udp_basic_connection(ioc, conn->endp_pair()),
-          core_(core),
+        : udp_basic_connection(ioc, core, conn->endp_pair()),
           conn_(conn),
           timeout_timer_(ioc)
     {
+        spdlog::info("UDP proxy: {}", endpoint_pair().to_string());
     }
     ~udp_proxy()
     {
@@ -50,8 +48,8 @@ protected:
             });
         boost::asio::co_spawn(
             get_io_context(), [this, self = shared_from_this()]() -> boost::asio::awaitable<void> {
-                socket_ = co_await core_.create_proxy_socket(self,
-                                                             proxy_endpoint_);
+                socket_ = co_await core_api().create_proxy_socket(self,
+                                                                  proxy_endpoint_);
                 if (!socket_) {
                     stop();
                     co_return;
@@ -88,7 +86,6 @@ protected:
             boost::system::error_code ec;
             socket_->close(ec);
         }
-        core_.remove_conn(shared_from_this());
     }
 
 private:
@@ -104,16 +101,11 @@ private:
                 stop();
             });
     }
-   
 
 private:
-    lwip::udp_conn::ptr conn_;
-
-    core_impl_api::udp_socket_ptr socket_;
-    core_impl_api&                core_;
-
+    lwip::udp_conn::ptr            conn_;
+    core_impl_api::udp_socket_ptr  socket_;
     boost::asio::ip::udp::endpoint proxy_endpoint_;
-
-    boost::asio::steady_timer timeout_timer_;
+    boost::asio::steady_timer      timeout_timer_;
 };
 }  // namespace tun2socks

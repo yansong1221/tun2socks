@@ -20,18 +20,28 @@ public:
 
     using endpoint = std::pair<std::string, uint16_t>;
 
+    struct proc_info
+    {
+        uint32_t    pid = 0;
+        std::string execute_path;
+    };
+
+    struct net_info
+    {
+        uint32_t speed_download_1s    = 0;
+        uint32_t speed_upload_1s      = 0;
+        uint64_t total_download_bytes = 0;
+        uint64_t total_upload_bytes   = 0;
+    };
+
 public:
-    virtual ~connection()                                               = default;
-    virtual conn_type                  type() const                     = 0;
-    virtual endpoint                   local_endpoint() const           = 0;
-    virtual endpoint                   remote_endpoint() const          = 0;
-    virtual uint32_t                   get_speed_download_1s() const    = 0;
-    virtual uint32_t                   get_speed_upload_1s() const      = 0;
-    virtual uint64_t                   get_total_download_bytes() const = 0;
-    virtual uint64_t                   get_total_upload_bytes() const   = 0;
-    virtual std::optional<uint32_t>    get_pid() const                  = 0;
-    virtual std::optional<std::string> get_execute_path() const         = 0;
-    virtual void                       stop()                           = 0;
+    virtual ~connection()                                     = default;
+    virtual conn_type                type() const             = 0;
+    virtual endpoint                 local_endpoint() const   = 0;
+    virtual endpoint                 remote_endpoint() const  = 0;
+    virtual const net_info&          get_net_info() const     = 0;
+    virtual std::optional<proc_info> get_process_info() const = 0;
+    virtual void                     stop()                   = 0;
 };
 
 }  // namespace tun2socks

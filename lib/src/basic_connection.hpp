@@ -1,4 +1,5 @@
 #pragma once
+#include "core_impl_api.h"
 #include "endpoint_pair.hpp"
 #include "process_info/process_info.hpp"
 #include "use_awaitable.hpp"
@@ -14,18 +15,45 @@ public:
     using endpoint_pair_type = basic_endpoint_pair<InternetProtocol>;
     using connection_type    = basic_connection<InternetProtocol>;
 
+private:
+    class net_info_impl : public connection::net_info {
+    public:
+        void update_download_bytes(uint32_t bytes)
+        {
+            total_download_bytes += bytes;
+            speed_download_ += bytes;
+        }
+        void update_upload_bytes(uint32_t bytes)
+        {
+            total_upload_bytes += bytes;
+            speed_upload_ += bytes;
+        }
+
+        void update_1s()
+        {
+            speed_download_1s = speed_download_;
+            speed_upload_1s   = speed_upload_;
+            speed_download_   = 0;
+            speed_upload_     = 0;
+        }
+
+    private:
+        uint32_t speed_download_ = 0;
+        uint32_t speed_upload_   = 0;
+    };
+
 public:
-    basic_connection(boost::asio::io_context&  ioc,
-                     const endpoint_pair_type& endpoint_pair)
+    explicit basic_connection(boost::asio::io_context&  ioc,
+                              core_impl_api&            core,
+                              const endpoint_pair_type& endpoint_pair)
         : boost::asio::detail::service_base<connection_type>(ioc),
+          core_(core),
           endpoint_pair_(endpoint_pair),
           update_timer_(ioc)
     {
-        pid_ = process_info::get_pid(endpoint_pair.src.port());
-        if (pid_)
-            execute_path_ = process_info::get_execute_path(*pid_);
+        proc_info_ = process_info::get_proc_info(endpoint_pair.src.port());
     }
-    ~basic_connection()
+    virtual ~basic_connection()
     {
     }
 
@@ -41,11 +69,7 @@ public:
                     co_await update_timer_.async_wait(net_awaitable[ec]);
                     if (ec)
                         co_return;
-
-                    speed_download_1s_ = speed_download_.load();
-                    speed_upload_1s_   = speed_upload_.load();
-                    speed_download_    = 0;
-                    speed_upload_      = 0;
+                    net_info_.update_1s();
                 }
             },
             boost::asio::detached);
@@ -54,20 +78,18 @@ public:
     }
     void stop() override
     {
+        core_.remove_conn(this->shared_from_this());
         boost::system::error_code ec;
         update_timer_.cancel(ec);
         this->on_connection_stop();
     }
 
 public:
-    virtual std::optional<uint32_t> get_pid() const override
+    std::optional<proc_info> get_process_info() const override
     {
-        return pid_;
+        return proc_info_;
     }
-    virtual std::optional<std::string> get_execute_path() const override
-    {
-        return execute_path_;
-    }
+
     conn_type type() const override
     {
         if constexpr (std::is_same_v<boost::asio::ip::tcp, InternetProtocol>)
@@ -85,61 +107,38 @@ public:
     {
         return std::make_pair(endpoint_pair_.dest.address().to_string(), endpoint_pair_.dest.port());
     }
-    uint32_t get_speed_download_1s() const override
+    const connection::net_info& get_net_info() const override
     {
-        return speed_download_1s_;
+        return net_info_;
     }
-
-    uint32_t get_speed_upload_1s() const override
-    {
-        return speed_upload_1s_;
-    }
-
-    uint64_t get_total_download_bytes() const override
-    {
-        return total_download_bytes_;
-    }
-
-    uint64_t get_total_upload_bytes() const override
-    {
-        return total_upload_bytes_;
-    }
-
     const endpoint_pair_type& endpoint_pair() const
     {
         return endpoint_pair_;
-    };
+    }
 
 protected:
     void update_download_bytes(uint32_t bytes)
     {
-        total_download_bytes_ += bytes;
-        speed_download_ += bytes;
+        net_info_.update_download_bytes(bytes);
     }
     void update_upload_bytes(uint32_t bytes)
     {
-        total_upload_bytes_ += bytes;
-        speed_upload_ += bytes;
+        net_info_.update_upload_bytes(bytes);
     }
     virtual void on_connection_start() = 0;
     virtual void on_connection_stop()  = 0;
 
+    core_impl_api& core_api()
+    {
+        return core_;
+    }
+
 private:
-    endpoint_pair_type endpoint_pair_;
-
-    std::optional<uint32_t>    pid_;
-    std::optional<std::string> execute_path_;
-
+    core_impl_api&            core_;
+    endpoint_pair_type        endpoint_pair_;
+    std::optional<proc_info>  proc_info_;
     boost::asio::steady_timer update_timer_;
-
-    std::atomic_uint64_t total_download_bytes_ = 0;
-    std::atomic_uint64_t total_upload_bytes_   = 0;
-
-    std::atomic_uint32_t speed_download_1s_ = 0;
-    std::atomic_uint32_t speed_upload_1s_   = 0;
-
-    std::atomic_uint32_t speed_download_ = 0;
-    std::atomic_uint32_t speed_upload_   = 0;
+    net_info_impl             net_info_;
 };
 
 using tcp_basic_connection = basic_connection<boost::asio::ip::tcp>;

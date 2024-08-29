@@ -21,118 +21,136 @@
 
 #include <filesystem>
 #include <spdlog/spdlog.h>
+namespace tun2socks {
+
 namespace process_info {
 
-void trim_right(std::string& str)
-{
-    while (!str.empty() && (str.back() == '\n' || str.back() == '\r'))
-        str.pop_back();
-}
-
-std::optional<std::string> GetExecutablePath(DWORD pid)
-{
-    char command[256];
-    snprintf(command, sizeof(command), "powershell -command \"(Get-Process -Id %d).Path\"", pid);
-    FILE* pipe = _popen(command, "r");
-    if (!pipe)
-        return std::nullopt;
-
-    char        buffer[128];
-    std::string result = "";
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
+    void trim_right(std::string& str)
+    {
+        while (!str.empty() && (str.back() == '\n' || str.back() == '\r'))
+            str.pop_back();
     }
-    trim_right(result);
-    _pclose(pipe);
 
-    std::error_code ec;
-    if (!std::filesystem::exists(result, ec))
-        return std::nullopt;
+    std::optional<std::string> GetExecutablePath(DWORD pid)
+    {
+        char command[256];
+        snprintf(command, sizeof(command), "powershell -command \"(Get-Process -Id %d).Path\"", pid);
+        FILE* pipe = _popen(command, "r");
+        if (!pipe)
+            return std::nullopt;
 
-    return result;
-}
+        char        buffer[128];
+        std::string result = "";
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            result += buffer;
+        }
+        trim_right(result);
+        _pclose(pipe);
 
-inline std::optional<uint32_t> get_pid(uint16_t port)
-{
-    std::vector<uint8_t> buffer;
-    ULONG                ulSize = 0;
-    if (GetExtendedTcpTable(NULL, &ulSize, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) == ERROR_INSUFFICIENT_BUFFER) {
-        buffer.resize(ulSize);
-        auto pTcpTable = (PMIB_TCPTABLE_OWNER_PID)buffer.data();
+        std::error_code ec;
+        if (!std::filesystem::exists(result, ec))
+            return std::nullopt;
 
-        if (GetExtendedTcpTable(pTcpTable, &ulSize, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) == NO_ERROR) {
-            for (int i = 0; i < (int)pTcpTable->dwNumEntries; i++) {
-                USHORT localPort = ::ntohs((u_short)pTcpTable->table[i].dwLocalPort);
-                if (localPort == port)
-                    return pTcpTable->table[i].dwOwningPid;
+        return result;
+    }
+
+    inline static std::optional<uint32_t> get_pid(uint16_t port)
+    {
+        std::vector<uint8_t> buffer;
+        ULONG                ulSize = 0;
+        if (GetExtendedTcpTable(NULL, &ulSize, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) == ERROR_INSUFFICIENT_BUFFER) {
+            buffer.resize(ulSize);
+            auto pTcpTable = (PMIB_TCPTABLE_OWNER_PID)buffer.data();
+
+            if (GetExtendedTcpTable(pTcpTable, &ulSize, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) == NO_ERROR) {
+                for (int i = 0; i < (int)pTcpTable->dwNumEntries; i++) {
+                    USHORT localPort = ::ntohs((u_short)pTcpTable->table[i].dwLocalPort);
+                    if (localPort == port)
+                        return pTcpTable->table[i].dwOwningPid;
+                }
             }
         }
-    }
 
-    if (GetExtendedTcpTable(NULL, &ulSize, TRUE, AF_INET6, TCP_TABLE_OWNER_PID_ALL, 0) == ERROR_INSUFFICIENT_BUFFER) {
-        buffer.resize(ulSize);
-        auto pTcpTable = (PMIB_TCP6TABLE_OWNER_PID)buffer.data();
+        if (GetExtendedTcpTable(NULL, &ulSize, TRUE, AF_INET6, TCP_TABLE_OWNER_PID_ALL, 0) == ERROR_INSUFFICIENT_BUFFER) {
+            buffer.resize(ulSize);
+            auto pTcpTable = (PMIB_TCP6TABLE_OWNER_PID)buffer.data();
 
-        if (GetExtendedTcpTable(pTcpTable, &ulSize, TRUE, AF_INET6, TCP_TABLE_OWNER_PID_ALL, 0) == NO_ERROR) {
-            for (int i = 0; i < (int)pTcpTable->dwNumEntries; i++) {
-                USHORT localPort = ::ntohs((u_short)pTcpTable->table[i].dwLocalPort);
-                if (localPort == port)
-                    return pTcpTable->table[i].dwOwningPid;
+            if (GetExtendedTcpTable(pTcpTable, &ulSize, TRUE, AF_INET6, TCP_TABLE_OWNER_PID_ALL, 0) == NO_ERROR) {
+                for (int i = 0; i < (int)pTcpTable->dwNumEntries; i++) {
+                    USHORT localPort = ::ntohs((u_short)pTcpTable->table[i].dwLocalPort);
+                    if (localPort == port)
+                        return pTcpTable->table[i].dwOwningPid;
+                }
             }
         }
-    }
 
-    if (GetExtendedUdpTable(NULL, &ulSize, TRUE, AF_INET, UDP_TABLE_OWNER_PID, 0) == ERROR_INSUFFICIENT_BUFFER) {
-        buffer.resize(ulSize);
-        auto pUdpTable = (MIB_UDPTABLE_OWNER_PID*)buffer.data();
+        if (GetExtendedUdpTable(NULL, &ulSize, TRUE, AF_INET, UDP_TABLE_OWNER_PID, 0) == ERROR_INSUFFICIENT_BUFFER) {
+            buffer.resize(ulSize);
+            auto pUdpTable = (MIB_UDPTABLE_OWNER_PID*)buffer.data();
 
-        if (GetExtendedUdpTable(pUdpTable, &ulSize, TRUE, AF_INET, UDP_TABLE_OWNER_PID, 0) == NO_ERROR) {
-            for (int i = 0; i < (int)pUdpTable->dwNumEntries; i++) {
-                USHORT localPort = ::ntohs((u_short)pUdpTable->table[i].dwLocalPort);
-                if (localPort == port)
-                    return pUdpTable->table[i].dwOwningPid;
+            if (GetExtendedUdpTable(pUdpTable, &ulSize, TRUE, AF_INET, UDP_TABLE_OWNER_PID, 0) == NO_ERROR) {
+                for (int i = 0; i < (int)pUdpTable->dwNumEntries; i++) {
+                    USHORT localPort = ::ntohs((u_short)pUdpTable->table[i].dwLocalPort);
+                    if (localPort == port)
+                        return pUdpTable->table[i].dwOwningPid;
+                }
             }
         }
-    }
 
-    if (GetExtendedUdpTable(NULL, &ulSize, TRUE, AF_INET6, UDP_TABLE_OWNER_PID, 0) == ERROR_INSUFFICIENT_BUFFER) {
-        buffer.resize(ulSize);
-        auto pUdpTable = (MIB_UDP6TABLE_OWNER_PID*)buffer.data();
+        if (GetExtendedUdpTable(NULL, &ulSize, TRUE, AF_INET6, UDP_TABLE_OWNER_PID, 0) == ERROR_INSUFFICIENT_BUFFER) {
+            buffer.resize(ulSize);
+            auto pUdpTable = (MIB_UDP6TABLE_OWNER_PID*)buffer.data();
 
-        if (GetExtendedUdpTable(pUdpTable, &ulSize, TRUE, AF_INET6, UDP_TABLE_OWNER_PID, 0) == NO_ERROR) {
-            for (int i = 0; i < (int)pUdpTable->dwNumEntries; i++) {
-                USHORT localPort = ::ntohs((u_short)pUdpTable->table[i].dwLocalPort);
-                if (localPort == port)
-                    return pUdpTable->table[i].dwOwningPid;
+            if (GetExtendedUdpTable(pUdpTable, &ulSize, TRUE, AF_INET6, UDP_TABLE_OWNER_PID, 0) == NO_ERROR) {
+                for (int i = 0; i < (int)pUdpTable->dwNumEntries; i++) {
+                    USHORT localPort = ::ntohs((u_short)pUdpTable->table[i].dwLocalPort);
+                    if (localPort == port)
+                        return pUdpTable->table[i].dwOwningPid;
+                }
             }
         }
-    }
-    return std::nullopt;
-}
-inline std::optional<std::string> get_execute_path(uint32_t pid)
-{
-    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, TRUE, pid);
-    if (hProcess == nullptr) {
-        auto p = GetExecutablePath(pid);
-        if (!p)
-            spdlog::error("Failed to open process pid: {}.", pid);
-        return p;
-    }
-
-    char path[MAX_PATH];
-    if (!GetModuleFileNameExA(hProcess, nullptr, path, MAX_PATH)) {
-        CloseHandle(hProcess);
-        spdlog::error("Failed to get process image name.");
         return std::nullopt;
     }
-    else {
-        CloseHandle(hProcess);
-        return path;
-    }
-}
+    inline static std::optional<std::string> get_execute_path(uint32_t pid)
+    {
+        HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, TRUE, pid);
+        if (hProcess == nullptr) {
+            auto p = GetExecutablePath(pid);
+            if (!p)
+                spdlog::error("Failed to open process pid: {}.", pid);
+            return p;
+        }
 
-inline uint32_t get_current_pid()
-{
-    return GetCurrentProcessId();
-}
+        char path[MAX_PATH];
+        if (!GetModuleFileNameExA(hProcess, nullptr, path, MAX_PATH)) {
+            CloseHandle(hProcess);
+            spdlog::error("Failed to get process image name.");
+            return std::nullopt;
+        }
+        else {
+            CloseHandle(hProcess);
+            return path;
+        }
+    }
+
+    inline std::optional<connection::proc_info> get_proc_info(uint16_t port)
+    {
+        auto pid = get_pid(port);
+        if (!pid)
+            return std::nullopt;
+
+        connection::proc_info info;
+        info.pid = *pid;
+
+        auto path = get_execute_path(*pid);
+        if (path)
+            info.execute_path = *path;
+
+        return info;
+    }
+    inline uint32_t get_current_pid()
+    {
+        return GetCurrentProcessId();
+    }
 }  // namespace process_info
+}  // namespace tun2socks

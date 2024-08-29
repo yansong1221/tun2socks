@@ -2,16 +2,17 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <tun2socks/connection.h>
 #include <tun2socks/platform.h>
-
+namespace tun2socks {
 namespace process_info {
 
-inline std::optional<uint32_t>    get_pid(uint16_t port);
-inline std::optional<std::string> get_execute_path(uint32_t pid);
-
-inline uint32_t get_current_pid();
+    inline std::optional<connection::proc_info>
+                    get_proc_info(uint16_t port);
+    inline uint32_t get_current_pid();
 
 }  // namespace process_info
+}  // namespace tun2socks
 
 #if defined(OS_WINDOWS)
 #    include "process_info/process_info_win32.hpp"
