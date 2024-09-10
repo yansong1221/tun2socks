@@ -7,50 +7,85 @@
 #    include <io.h>
 #    include <windows.h>
 #endif
+
+#include "argparse.hpp"
+
 int main(int argc, char** argv)
 {
 #ifdef OS_WINDOWS
     SetConsoleOutputCP(CP_UTF8);
     std::locale::global(std::locale("en_US.UTF-8"));
 #endif
-    tun2socks::core tun2socks_;
+    argparse::ArgumentParser program("tun2socks");
 
-    tun2socks::parameter::tun_device param;
-    param.tun_name = "mate";
+    program.add_argument("-tname", "--tunName")
+        .help("The Name of the TUN interface.")
+        .default_value(std::string("tun2socks"));
 
-    tun2socks::parameter::tun_device::address tun_ipv4;
-    tun_ipv4.addr          = "10.6.7.7";
-    //tun_ipv4.dns           = "114.114.114.114";
-    tun_ipv4.prefix_length = 24;
-    param.ipv4             = tun_ipv4;
+    program.add_argument("-tip4", "--tunIP4")
+        .help("The IPV4 address of the TUN interface. Default( 10.1.2.1/24 )")
+        .default_value(std::string("10.1.2.1/24"));
 
-    tun2socks::parameter::tun_device::address tun_ipv6;
-    tun_ipv6.addr          = "fe80::613b:4e3f:81e9:7e01";
-    //tun_ipv6.dns           = "2606:4700:4700::1111";
-    tun_ipv6.prefix_length = 64;
-    param.ipv6             = tun_ipv6;
+    program.add_argument("-tip4dns", "--tunIP4DNS")
+        .help("The IPV4 DNS address of the TUN interface. Example( 8.8.8.8 )");
 
+    program.add_argument("-tip6", "--tunIP6")
+        .help("The IPV6 address of the TUN interface. Example( 2001:db8:85a3::8a2e:370:7334/64 )");
+
+    program.add_argument("-tip6dns", "--tunIP6DNS")
+        .help("The IPV6 DNS address of the TUN interface. Example( 2606:4700:4700::1111 )");
+
+    program.add_argument("-s5proxy", "--socks5Proxy")
+        .help("The URL of your socks5 server. Default( socks5://127.0.0.1:1080 )")
+        .default_value(std::string("socks5://127.0.0.1:1080"));
+
+    program.add_argument("-l", "--level")
+        .help(
+            "Set logging level. 0(Off), 1(Error), 2(Critical), 3(Warning), "
+            "4(Info), 5(Debug), 6(Trace).")
+        .default_value(4)
+        .action([](const std::string& port) { return std::stoi(port); });
+    program.add_argument("-f", "--log-file")
+        .help("The path to log file. Logs are printed by default.");
+
+    tun2socks::parameter::tun_device    tun_param;
     tun2socks::parameter::socks5_server socks5_param;
-    socks5_param.host     = "127.0.0.1";
-    socks5_param.port     = 7897;
-    socks5_param.username = "jack";
-    socks5_param.password = "1111";
-    // tun2socks_.start(param, "socks5://192.168.101.8:7897");
 
-   /* tun2socks_.proxy_policy()
-        .set_process(R"(C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe)", false);*/
-    // tun2socks_.proxy_policy().set_process(R"(C:\Program Files\Clash Verge\verge-mihomo.exe)", true);
-    tun2socks_.proxy_policy().set_process(10108, true);
-    tun2socks_.proxy_policy().set_default_direct(true);
-    tun2socks_.connections();
-
+    tun2socks::core core;
     try {
-        tun2socks_.start(param, socks5_param);
-    }
-    catch (const std::exception& e) {
-        printf("%s\n", e.what());
-    }
+        program.parse_args(argc, argv);
 
-    tun2socks_.wait();
+        tun_param.tun_name = program.get<std::string>("-tname");
+
+        auto tip4 = program.get<std::string>("-tip4");
+
+        tun2socks::parameter::tun_device::address tun_ipv4;
+        tun2socks::core::parse_cidr_addr(tip4, tun_ipv4.addr, tun_ipv4.prefix_length);
+        if (auto tip4dns = program.present<std::string>("-tip4dns"); tip4dns)
+            tun_ipv4.dns = *tip4dns;
+
+        tun_param.ipv4 = tun_ipv4;
+
+        if (auto tip6 = program.present<std::string>("-tip6"); tip6) {
+            tun2socks::parameter::tun_device::address tun_ipv6;
+            tun2socks::core::parse_cidr_addr(*tip6, tun_ipv6.addr, tun_ipv6.prefix_length);
+            if (auto tip6dns = program.present<std::string>("-tip6dns"); tip6dns)
+                tun_ipv6.dns = *tip6dns;
+
+            tun_param.ipv6 = tun_ipv6;
+        }
+        tun2socks::core::parse_socks5_url(program.get<std::string>("-s5proxy"), socks5_param);
+    }
+    catch (const std::exception& err) {
+        std::cout << err.what() << std::endl;
+        std::cout << program;
+        return -1;
+    }
+    core.proxy_policy().set_process(10108, true);
+    core.proxy_policy().set_default_direct(true);
+    core.connections();
+
+    core.start(tun_param, socks5_param);
+    core.wait();
     return 0;
 }

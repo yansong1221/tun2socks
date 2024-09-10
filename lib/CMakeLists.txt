@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_subdirectory(lwip)
 
-find_package(Boost REQUIRED COMPONENTS asio)
+find_package(Boost REQUIRED COMPONENTS asio url)
 find_package(spdlog CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 
@@ -87,17 +87,12 @@ target_include_directories(${MODULE}
 )
 
 target_link_libraries(${MODULE} 
-PRIVATE Boost::asio
+PRIVATE Boost::asio Boost::url
 PRIVATE spdlog::spdlog fmt::fmt
 PUBLIC lwipcore
 )
 target_compile_definitions(${MODULE} PRIVATE BOOST_BIND_GLOBAL_PLACEHOLDERS)
 
 if(MSVC)
-	target_compile_options( ${MODULE} PRIVATE
-		"$<$<CXX_COMPILER_ID:MSVC>:/source-charset:utf-8>"
-		"$<$<CXX_COMPILER_ID:MSVC>:/execution-charset:utf-8>"
-		
-	)
 	target_compile_definitions(${MODULE} PRIVATE _WIN32_WINNT=0x0601)
 endif(MSVC)

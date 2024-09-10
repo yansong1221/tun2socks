@@ -27,6 +27,13 @@ public:
 
     void stop();
 
+    static void parse_cidr_addr(const std::string& cidr,
+                                std::string&       ip,
+                                uint8_t&           prefix_length);
+
+    static void parse_socks5_url(const std::string&        url,
+                                 parameter::socks5_server& socks5_param);
+
 private:
     core_impl* impl_;
 };
